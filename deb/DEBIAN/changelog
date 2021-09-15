@@ -1,0 +1,14 @@
+gvolctrl (1.2.4) unstable; urgency=low
+
+  * display integers in tooltip
+  * mute/unmute on middle click
+
+ -- Andreas Hrubak <andreas@uucp.hu>  Sun, 16 Oct 2016 18:14:03 +0200
+
+gvolctrl (1.2.2) unstable; urgency=low
+
+  * rewritten by using direct pulseaudio bindings
+  * depend on python-pulsectl
+  * listen for and feedback volume changes
+
+ -- Andreas Hrubak <andreas@uucp.hu>  Sun, 19 Jun 2016 13:52:39 +0200

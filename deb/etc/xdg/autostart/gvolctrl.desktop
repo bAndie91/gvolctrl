@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Volume Control
+Icon=/usr/share/icons/gnome/24x24/status/stock_volume.png
+Exec=gvolctrl
+Terminal=false
+Type=Application
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-after=panel

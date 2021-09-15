@@ -1,0 +1,14 @@
+Package: gvolctrl
+Priority: optional
+Section: gnome
+Installed-Size: 64
+Maintainer: Andras Hrubak <andreas@uucp.hu>
+Architecture: all
+Version: 1.2.4
+Depends: gnome-icon-theme, python-gtk2, python-setproctitle, python-pulsectl
+Recommends: pulseaudio-utils
+Suggests: 
+Provides: 
+Replaces: 
+Conflicts: 
+Description: Very simple volume control systray application

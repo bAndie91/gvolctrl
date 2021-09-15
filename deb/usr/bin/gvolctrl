@@ -1,0 +1,222 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import gtk
+import os
+import sys
+import setproctitle
+import pulsectl
+import threading
+import time
+
+
+ScrollVolumeStep = 2.0
+MixerChannel = 'w'
+Widgets = {}
+gtk.gdk.threads_init()
+TTIP_STR = "Hangerő"
+
+
+def run_async(widget, argv):
+	pid = os.fork()
+	if pid == 0:
+		sys.stdin.close()
+		pid = os.fork()
+		if pid == 0:
+			try:
+				os.setsid()
+				os.execvp(argv[0], argv)
+				sys.exit(127)
+			except OSError, exc:
+				sys.stderr.write("%s: %s\n" % (argv[0], exc.strerror))
+				sys.exit(127)
+		else:
+			sys.exit(0)
+	else:
+		os.waitpid(pid, 0)
+
+def run_ifexists(widget, argv):
+	if argv[0].find('/') > -1:
+		if os.path.lexists(argv[0]):
+			return run_async(widget, argv)
+	else:
+		for d in os.environ["PATH"].split(':'):
+			if os.path.lexists(d + '/' + argv[0]):
+				return run_async(widget, argv)
+	dialog = gtk.MessageDialog(None, gtk.DIALOG_DESTROY_WITH_PARENT, gtk.MESSAGE_ERROR, gtk.BUTTONS_OK, "Command not found: %s" % argv[0])
+	dialog.set_title("Not found");
+	dialog.connect('response', lambda x, y: x.destroy())
+	dialog.show()	
+
+
+def pulseSink():
+	default = pulse.server_info().default_sink_name
+	for sink in pulse.sink_list():
+		if sink.name == default:
+			return sink
+	return pulse.sink_list()[0]
+
+def get_volume():
+	pulse.event_listen_stop()
+	value = pulseSink().volume.value_flat * 100
+	return value
+
+def set_volume(value):
+	value = value / 100.0
+	if value < 0: value = 0
+	pulse.event_listen_stop()
+	pulse.volume_set_all_chans(pulseSink(), value)
+
+def hozzaigazitas(vol=None):
+	if vol is None:
+		vol = get_volume()
+	set_icon(trayicon, vol)
+	
+	scale = Widgets["scale"]
+	scale.handler_block_by_func(scale_adjusted)
+	scale.set_value(vol)
+	scale.handler_unblock_by_func(scale_adjusted)
+
+def scale_adjusted(widget):
+	vol = widget.get_value()
+	set_volume(vol)
+	set_icon(trayicon, vol)
+	return True
+
+def on_click(widget, event):
+	if event.button == 2:
+		# Middle Click
+		vol = Widgets['scale'].get_value()
+		if vol == 0:
+			set_volume(Widgets['scale'].get_data('saved-value'))
+		else:
+			Widgets['scale'].set_data('saved-value', vol)
+			set_volume(0)
+		return True
+
+def on_right_click(widget, event_button, event_time):
+	make_menu(event_button, event_time)
+
+def on_left_click(widget):
+	if Widgets["scale_win"].props.visible:
+		Widgets["scale_win"].hide()
+	else:
+		Widgets["scale_win"].show_all()
+
+def on_wheel_scroll(widget, event):
+	# vol = Widgets['scale'].get_value()
+	vol = get_volume()
+	if event.direction == gtk.gdk.SCROLL_UP:
+		new = min(100, vol + ScrollVolumeStep)
+	elif event.direction == gtk.gdk.SCROLL_DOWN:
+		new = max(0, vol - ScrollVolumeStep)
+	set_volume(new)
+	if Widgets.has_key("scale"):
+		scale = Widgets["scale"]
+		scale.set_value(new)
+
+def make_menu(event_button, event_time):
+	menu = gtk.Menu()
+	
+	for mlabel, mcmd in ("Hangszabályzók:", None), ("Pulse Audio - Control", "pavucontrol"), ("Pulse Audio - Manager", "paman"), ("Audio Mixer", ["padsp", "aumix-gtk"]), ("ALSA Mixer", "alsamixergui"):
+		mitem = gtk.MenuItem(mlabel)
+		if mcmd:
+			mitem.connect('activate', run_ifexists, mcmd if type(mcmd) == type([]) else [mcmd])
+		else:
+			al = mitem.get_children()[0]
+			al.set_markup("<b>%s</b>" % al.get_label())
+			mitem.set_sensitive(False)
+		menu.append(mitem)
+
+	menu.append(gtk.SeparatorMenuItem())
+	mitem = gtk.MenuItem("Kilép")
+	mitem.connect('activate', gtk.main_quit)
+	menu.append(mitem)
+
+	menu.show_all()
+	menu.popup(None, None, gtk.status_icon_position_menu, event_button, event_time, trayicon)
+
+def elhelyez(widget, rect):
+	menu = gtk.Menu()
+	menu.set_size_request(rect.width, rect.height)
+	x, y, b = gtk.status_icon_position_menu(menu, trayicon)
+	widget.move(x, y)
+
+def elhelyez_reegi(widget, rect):
+	root = widget.get_screen().get_root_window()
+	mouse_x, mouse_y, mouse_mods = root.get_pointer()
+	x = mouse_x - rect.width
+	if x < 0: x = 0
+	y = mouse_y - rect.height
+	if y < 0: y = 0
+	widget.move(x, y)
+
+def make_volume_scale():
+	Widgets['scale_win'] = gtk.Window(gtk.WINDOW_POPUP)
+	Widgets['scale_win'].connect('size-allocate', elhelyez)
+	frame = gtk.Frame()
+	frame.set_shadow_type(gtk.SHADOW_OUT)
+	box = gtk.VBox(1)
+	
+	adjuster = gtk.Adjustment(get_volume() + 0.0, 0.0, 100.0, 1.0, 10.0, 0.0)
+	scale = gtk.VScale(adjuster)
+	scale.set_update_policy(gtk.UPDATE_CONTINUOUS)
+	scale.set_digits(0)
+	scale.set_value_pos(gtk.POS_LEFT)
+	scale.set_draw_value(True)
+	scale.set_inverted(True)
+	scale.set_size_request(60, 140)
+	scale.connect('value-changed', scale_adjusted)
+	
+	box.pack_start(scale, True, True, 0)
+	frame.add(box)
+	Widgets['scale_win'].add(frame)
+	Widgets['scale'] = scale
+
+def set_icon(widget, volume):
+	if volume <= 0:		variant = 'mute'
+	elif volume < 33:	variant = 'min'
+	elif volume < 66:	variant = 'med'
+	else:				variant = 'max'
+	widget.set_from_icon_name('stock_volume-%s' % variant)
+	trayicon.set_tooltip((TTIP_STR + ': %d%%' % volume))
+
+def listen_pulse_events():
+	try:
+		while True:
+			pulseListen.event_listen(timeout=86400)
+			time.sleep(1)
+	except pulsectl.PulseDisconnected:
+		return
+
+def pulse_event(evt):
+	gtk.threads_enter()
+	hozzaigazitas()
+	gtk.threads_leave()
+	#raise pulsectl.PulseLoopStop()
+
+
+
+PROGNAME = 'gvolctrl'
+setproctitle.setproctitle(PROGNAME)
+trayicon = gtk.StatusIcon()
+trayicon.connect('popup-menu', on_right_click)
+trayicon.connect('activate', on_left_click)
+trayicon.connect('button-press-event', on_click)
+trayicon.connect('scroll-event', on_wheel_scroll)
+trayicon.set_tooltip((TTIP_STR))
+
+pulseListen = pulsectl.Pulse(PROGNAME)
+pulseListen.event_mask_set('sink')
+pulseListen.event_callback_set(pulse_event)
+thr = threading.Thread(target=listen_pulse_events)
+thr.start()
+pulse = pulsectl.Pulse(PROGNAME)
+
+make_volume_scale()
+hozzaigazitas()
+gtk.main()
+pulse.disconnect()
+pulseListen.disconnect()
+thr.join()
+
