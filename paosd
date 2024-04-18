@@ -28,20 +28,21 @@ def pulse_event(event):
 	sink = pulseSink()
 	desc = sink.description
 	muted = sink.mute
+	volume = sink.volume.value_flat * 100
+	volume = int(volume)
 	if muted:
-		osd_volume(0, f"{desc} - MUTED")
+		osd_volume(volume, f"{desc} - MUTED ({int(volume)}%)")
 	else:
-		volume = sink.volume.value_flat * 100
-		osd_volume(volume, desc)
+		osd_volume(volume, f"{desc} - {int(volume)}%")
 
 
 def osd_volume(volume, label='volume'):
-	osd(f"bars({label},{int(volume)})")
+	label_esc = label.replace(')', '\\)')
+	osd(f"bars({label_esc},{volume})")
 
 
 def osd(command):
 	with open(f"/tmp/osdsh.{os.getuid()}", 'w') as fh:
-		print(command)
 		fh.write(command)
 
 
