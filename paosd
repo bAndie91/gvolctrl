@@ -31,9 +31,20 @@ def pulse_event(event):
 	volume = sink.volume.value_flat * 100
 	volume = int(volume)
 	if muted:
-		osd_volume(volume, f"{desc} - MUTED ({int(volume)}%)")
+		display_volume(volume, f"{desc} - MUTED ({int(volume)}%)")
 	else:
-		osd_volume(volume, f"{desc} - {int(volume)}%")
+		display_volume(volume, f"{desc} - {int(volume)}%")
+
+
+class CallOnlyWhenParamsChanged(object):
+	def __init__(self, func):
+		self.func = func
+		self.last_pparam = None
+		self.last_kwparam = None
+		
+	def __call__(self, *pparam, **kwparam):
+		if self.last_pparam != pparam or self.last_kwparam != kwparam:
+			self.func(*pparam, **kwparam)
 
 
 def osd_volume(volume, label='volume'):
@@ -46,6 +57,7 @@ def osd(command):
 		fh.write(command)
 
 
+display_volume = CallOnlyWhenParamsChanged(osd_volume)
 
 pulse_listener = pulsectl.Pulse('paosd')
 pulse_blocking = pulsectl.Pulse('paosd')
