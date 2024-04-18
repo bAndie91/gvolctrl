@@ -26,14 +26,16 @@ def pulseSink():
 
 def pulse_event(event):
 	sink = pulseSink()
-	desc = sink.description
+	sink_desc = sink.description
+	port_desc = sink.port_active.description
 	muted = sink.mute
 	volume = sink.volume.value_flat * 100
 	volume = int(volume)
+	label = f"{sink_desc} - {port_desc}"
 	if muted:
-		display_volume(volume, f"{desc} - MUTED ({int(volume)}%)")
+		display_volume(volume, f"{label} - MUTED ({int(volume)}%)")
 	else:
-		display_volume(volume, f"{desc} - {int(volume)}%")
+		display_volume(volume, f"{label} - {int(volume)}%")
 
 
 class CallOnlyWhenParamsChanged(object):
@@ -44,6 +46,8 @@ class CallOnlyWhenParamsChanged(object):
 		
 	def __call__(self, *pparam, **kwparam):
 		if self.last_pparam != pparam or self.last_kwparam != kwparam:
+			self.last_pparam = pparam
+			self.last_kwparam = kwparam
 			self.func(*pparam, **kwparam)
 
 
