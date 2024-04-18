@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+
+import os
+import pulsectl
+import time
+import traceback
+
+
+def listen_pulse_events():
+	while True:
+		try:
+			while True:
+				pulse_listener.event_listen(timeout=86400)
+				time.sleep(1)
+		except pulsectl.PulseDisconnected:
+			traceback.print_exc()
+
+
+def pulseSink():
+	default = pulse_blocking.server_info().default_sink_name
+	for sink in pulse_blocking.sink_list():
+		if sink.name == default:
+			return sink
+	return pulse_blocking.sink_list()[0]
+
+
+def pulse_event(event):
+	sink = pulseSink()
+	desc = sink.description
+	muted = sink.mute
+	if muted:
+		osd_volume(0, f"{desc} - MUTED")
+	else:
+		volume = sink.volume.value_flat * 100
+		osd_volume(volume, desc)
+
+
+def osd_volume(volume, label='volume'):
+	osd(f"bars({label},{int(volume)})")
+
+
+def osd(command):
+	with open(f"/tmp/osdsh.{os.getuid()}", 'w') as fh:
+		print(command)
+		fh.write(command)
+
+
+
+pulse_listener = pulsectl.Pulse('paosd')
+pulse_blocking = pulsectl.Pulse('paosd')
+
+pulse_listener.event_mask_set('sink')
+pulse_listener.event_callback_set(pulse_event)
+listen_pulse_events()
