@@ -8,6 +8,12 @@ import traceback
 import threading
 import gtk
 import hband_tools.gui as gui
+try:
+	import better_exchook
+except ImportError:
+	pass
+else:
+	better_exchook.install()
 
 
 APPNAME = 'paosd'
