@@ -1,19 +1,21 @@
 
-default:
-	@echo maybe interested in: make install
-	false
-.PHONY: install
+INSTALL_WRAPPER =
 
-install: /usr/local/bin/gvolctrl /usr/local/bin/paosd /etc/xdg/autostart/gvolctrl.desktop
+.PHONY: default
+default:
+	@echo maybe interested in: make install INSTALL_WRAPPER=sudo
+	false
+
 .PHONY: install
+install: /usr/local/bin/gvolctrl/etc/xdg/autostart/gvolctrl.desktop  /usr/local/bin/paosd
 
 /usr/local/bin/gvolctrl: deb/usr/bin/gvolctrl
-	install $< $@
+	$(INSTALL_WRAPPER) install $< $@
 
 /usr/local/bin/paosd: paosd
-	install $< $@
+	$(INSTALL_WRAPPER) install $< $@
 
 /etc/xdg/autostart/gvolctrl.desktop: deb/etc/xdg/autostart/gvolctrl.desktop
-	install $< $@
-	update-menus
-	update-desktop-database
+	$(INSTALL_WRAPPER) install $< $@
+	$(INSTALL_WRAPPER) update-menus
+	$(INSTALL_WRAPPER) update-desktop-database
