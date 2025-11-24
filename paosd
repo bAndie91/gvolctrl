@@ -47,17 +47,17 @@ def on_pulse_event_in_gtk_thread():
 		muted = sink.mute
 		volume = sink.volume.value_flat * 100
 		volume = int(volume)
-		display_volume(sink, sink_desc, port_desc, muted, volume)
+		display_volume(sink, sink_desc, port_desc, muted, volume, sink.state._value == 'running')
 
 InfoDisplayedPerDevice = {}
 
-def display_volume(pa_sink, device, device_port, muted, volume):
+def display_volume(pa_sink, device, device_port, muted, volume, has_activity):
 	key = (device, device_port)
-	info = (muted, volume)
-	if InfoDisplayedPerDevice.get(key, (None, None)) != info:
+	info = (muted, volume, has_activity)
+	if InfoDisplayedPerDevice.get(key, (None, None, None)) != info:
 		gtk.threads_enter()
 		main_win.current_pa_sink = pa_sink
-		main_win.update(device + " - " + device_port, muted, volume)
+		main_win.update(device + " - " + device_port, muted, volume, has_activity)
 		main_win.show_all()
 		# TODO timer to hide
 		gtk.threads_leave()
@@ -77,6 +77,11 @@ class VolumeWindow(gui.Window):
 		frame.set_shadow_type(gtk.SHADOW_OUT)
 		box = gtk.VBox(homogeneous=False, spacing=0)
 		hbox = gtk.HBox(homogeneous=False, spacing=5)
+
+		self.icon = gtk.ToolButton()
+		self.icon.connect('clicked', self.on_icon_click)
+		self.voltext = gtk.Label()
+		self.voltext.set_width_chars(4)
 		
 		self.scale = gtk.HScale(gtk.Adjustment(0.0, 0.0, 100.0, 1.0, 10.0, 0.0))
 		self.scale.set_update_policy(gtk.UPDATE_CONTINUOUS)
@@ -85,10 +90,8 @@ class VolumeWindow(gui.Window):
 		self.scale.set_size_request(120, 0)
 		self.scale.connect('change-value', self.on_slider_change)
 		
-		self.icon = gtk.ToolButton()
-		self.icon.connect('clicked', self.on_icon_click)
-		self.voltext = gtk.Label()
-		self.voltext.set_width_chars(4)
+		self.activity_indicator = gui.Image()
+		self.activity_indicator.set_size_request(*gtk.icon_size_lookup(gtk.ICON_SIZE_SMALL_TOOLBAR))
 		self.label = gtk.Label()
 		self.label.set_alignment(0, 0.5)
 		
@@ -96,6 +99,7 @@ class VolumeWindow(gui.Window):
 		hbox.pack_start(self.icon, expand=False, fill=False, padding=0)
 		hbox.pack_start(self.voltext, expand=False, fill=False, padding=0)
 		hbox.pack_start(self.scale, expand=True, fill=True, padding=0)
+		hbox.pack_start(self.activity_indicator, expand=False, fill=False, padding=0)
 		box.pack_start(self.label, expand=True, fill=True, padding=0)
 		frame.add(box)
 		self.add(frame)
@@ -109,10 +113,14 @@ class VolumeWindow(gui.Window):
 			pulseproxy.volume_set_all_chans(self.current_pa_sink, value/100)
 		return False
 	
-	def update(self, label, muted, volume):
+	def update(self, label, muted, volume, has_activity):
 		self.scale.set_value(volume)
 		self.update_icon(muted)
 		self.voltext.set_text('%d%%' % volume)
+		if has_activity:
+			self.activity_indicator.icon = (gtk.STOCK_MEDIA_PLAY, gtk.ICON_SIZE_SMALL_TOOLBAR)
+		else:
+			self.activity_indicator.clear()
 		self.label.set_text(label)
 	
 	def update_icon(self, muted):
