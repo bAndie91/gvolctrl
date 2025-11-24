@@ -2,10 +2,12 @@
 
 import sys
 import os
-import pulsectl
+import socket
 import time
+import json
 import traceback
 import threading
+import pulsectl
 import gtk
 import hband_tools.gui as gui
 try:
@@ -24,16 +26,21 @@ def listen_pulse_events():
 		if State['pulse_listener'] is None: State['pulse_listener'] = pulsectl.Pulse(APPNAME)
 		State['pulse_listener'].event_mask_set('sink')
 		State['pulse_listener'].event_callback_set(on_pulse_event)
+		while State['pause']:
+			print 'paused'
+			time.sleep(0.1)
+		print 'listening'
 		try:
 			State['pulse_listener'].event_listen(timeout=None)
-			time.sleep(1)
 		except pulsectl.PulseDisconnected:
+			print 'disconnected'
 			State['pulse_listener'] = None
 		except:
+			print 'exception'
 			pass
 
 def on_pulse_event(event):
-	for sink in pulseproxy.sink_list():
+	for sink in pulseproxy.call('sink_list'):
 		sink_desc = sink.description
 		port_desc = sink.port_active.description
 		muted = sink.mute
@@ -74,11 +81,12 @@ class VolumeWindow(gui.Window):
 		self.scale.set_draw_value(False)
 		self.scale.set_inverted(False)
 		self.scale.set_size_request(120, 0)
-		#self.scale.connect('value-changed', scale_adjusted)
+		self.scale.connect('change-value', self.change_volume_current_device_port)
 		
 		self.icon = gtk.ToolButton()
-		self.icon.connect('clicked', toggle_mute_current_device_port)
+		self.icon.connect('clicked', self.toggle_mute_current_device_port)
 		self.voltext = gtk.Label()
+		self.voltext.set_width_chars(4)
 		self.label = gtk.Label()
 		self.label.set_alignment(0, 0.5)
 		
@@ -89,7 +97,14 @@ class VolumeWindow(gui.Window):
 		box.pack_start(self.label, expand=True, fill=True, padding=0)
 		frame.add(box)
 		self.add(frame)
-		self.show_all()
+	
+	def toggle_mute_current_device_port(self, button):
+		muted = button.get_data('muted')
+		pulseproxy.call('mute', self.current_pa_sink, not muted)
+		#self.update_icon(not muted)
+	
+	def change_volume_current_device_port(self, range_obj, scroll_type, value):
+		pulseproxy.call('volume_set_all_chans', self.current_pa_sink, value/100)
 	
 	def update(self, label, muted, volume):
 		self.scale.set_value(volume)
@@ -99,6 +114,7 @@ class VolumeWindow(gui.Window):
 		self.show_all()
 	
 	def update_icon(self, muted):
+		self.icon.set_data('muted', muted)
 		volume = self.scale.get_value()
 		if muted or volume <= 0: icon_variant = 'mute'
 		elif volume < 33:        icon_variant = 'min'
@@ -106,39 +122,62 @@ class VolumeWindow(gui.Window):
 		else:                    icon_variant = 'max'
 		self.icon.set_icon_name('stock_volume-%s' % icon_variant)
 
+class EmptyResponseError(Exception):
+	pass
+
 class PulseProxy(object):
 	def __init__(self):
-		self.pa = pulsectl.Pulse(APPNAME)
-	def connect(self):
-		if not self.pa.connected:
-			self.pa.connect()
-	def toggle_mute(self, sink):
-		self.connect()
-		State['pulse_listener'].event_listen_stop()
-		desired_state = not sink.mute
-		self.pa.mute(sink, desired_state)
-		return desired_state
-	def mute(self, sink):
-		self.connect()
-		State['pulse_listener'].event_listen_stop()
-		self.pa.mute(sink, True)
-	def unmute(self, sink):
-		self.connect()
-		State['pulse_listener'].event_listen_stop()
-		self.pa.mute(sink, False)
-	def sink_list(self):
-		self.connect()
-		return self.pa.sink_list()
-
-def toggle_mute_current_device_port(mute_button):
-	if main_win.current_pa_sink is not None:
-		muted = pulseproxy.toggle_mute(main_win.current_pa_sink)
-		main_win.update_icon(muted)
+		self.child_pid = None
+	
+	def call(self, method, *args):
+		n_spawns = 0
+		if self.child_pid is None:
+			self.spawn()
+			n_spawns += 1
+		rpc = json.dumps({'method': method, 'args': args})
+		while n_spawns < 2:
+			try:
+				self.wfile.write(rpc + "\n")
+				self.wfile.flush()
+				response = self.rfile.readline()
+				if response == '': raise EmptyResponseError
+				rpc_response = json.loads(response)
+				return rpc_response
+			except (IOError, OSError, EmptyResponseError) as exc:
+				self.spawn()
+				n_spawns += 1
+	
+	def spawn(self):
+		parent_sock, child_sock = socket.socketpair()
+		# TODO cleanup unused sockets
+		pid = os.fork()
+		if pid == 0:
+			print "child spown"
+			parent_sock.close()
+			rfile = child_sock.makefile('r')
+			wfile = child_sock.makefile('w')
+			os.closerange(3, 65535)
+			pa = pulsectl.Pulse(APPNAME)
+			while True:
+				line = rfile.readline()
+				if line == '': break
+				print ">>>", line
+				rpc = json.loads(line)
+				answer = rpc['method'](*rpc['args'])
+				wfile.write(json.dumps(answer) + "\n")
+				wfile.flush()
+		else:
+			self.child_pid = pid
+			child_sock.close()
+			self.rpc_sock = parent_sock
+			self.rfile = parent_sock.makefile('r')
+			self.wfile = parent_sock.makefile('w')
 
 
 
 State = {
 	'run': True,
+	'pause': False,
 	'pulse_listener': None,
 }
 
