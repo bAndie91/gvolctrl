@@ -6,61 +6,28 @@ import socket
 import time
 import json
 import traceback
-import pulsectl
 try:
 	import better_exchook
 except ImportError:
-	class DummyBetterExecHook(object):
-		def install(self):
-			pass
-	better_exchook = DummyBetterExecHook()
+	pass
+else:
+	better_exchook.install()
+
+import pulsectl
+import threading
+import glib
+import gtk
+import hband_tools.gui as gui
+
 
 
 APPNAME = 'paosd'
 
 
-def json_serializer(obj):
-	classname = obj.__class__.__name__
-	serialized = {'class': classname, 'object': {}}
-	if isinstance(obj, pulsectl.PulseSinkInfo):
-		serialized['object'] = {'name': obj.name}
-	return serialized
-
-def json_deserializer(d):
-	classname = d.get('class')
-	if classname == 'PulseSinkInfo':
-		d = TODO .get_sink_by_name(d['object']['name'])
-		#TODO dont pass PulseSinkInfo objects but FlatPulseSinkInfo
-		#or pass by object id and instanciate a proxy object in the parent...
-	return d
-
-if '--pulse-rpc' in sys.argv:
-	better_exchook.install()
-	child_sock_fd = int(sys.argv[2])
-	rfile = os.fdopen(child_sock_fd, 'r')
-	wfile = os.fdopen(child_sock_fd, 'w')
-	pa = pulsectl.Pulse(APPNAME)
-	while True:
-		line = rfile.readline()
-		if line == '': break
-		rpc = json.loads(line, object_hook=json_deserializer)
-		method = getattr(pa, rpc['method'])
-		answer = method(*rpc['args'])
-		wfile.write(json.dumps(answer, default=json_serializer) + "\n")
-		wfile.flush()
-	raise SystemExit(0)
-
-
-
-import threading
-import gtk
-import hband_tools.gui as gui
-better_exchook.install()
-
 
 def listen_pulse_events():
 	while State['run']:
-		if State['pulse_listener'] is None: State['pulse_listener'] = pulsectl.Pulse(APPNAME)
+		if State['pulse_listener'] is None: State['pulse_listener'] = pulsectl.Pulse(APPNAME+'.listen')
 		State['pulse_listener'].event_mask_set('sink')
 		State['pulse_listener'].event_callback_set(on_pulse_event)
 		try:
@@ -71,7 +38,10 @@ def listen_pulse_events():
 			pass
 
 def on_pulse_event(event):
-	for sink in pulseproxy.call('sink_list'):
+	glib.idle_add(on_pulse_event_in_gtk_thread, priority=glib.PRIORITY_DEFAULT_IDLE)
+
+def on_pulse_event_in_gtk_thread():
+	for sink in pulseproxy.sink_list():
 		sink_desc = sink.description
 		port_desc = sink.port_active.description
 		muted = sink.mute
@@ -88,6 +58,7 @@ def display_volume(pa_sink, device, device_port, muted, volume):
 		gtk.threads_enter()
 		main_win.current_pa_sink = pa_sink
 		main_win.update(device + " - " + device_port, muted, volume)
+		main_win.show_all()
 		# TODO timer to hide
 		gtk.threads_leave()
 		InfoDisplayedPerDevice[key] = info
@@ -112,10 +83,10 @@ class VolumeWindow(gui.Window):
 		self.scale.set_draw_value(False)
 		self.scale.set_inverted(False)
 		self.scale.set_size_request(120, 0)
-		self.scale.connect('change-value', self.change_volume_current_device_port)
+		self.scale.connect('change-value', self.on_slider_change)
 		
 		self.icon = gtk.ToolButton()
-		self.icon.connect('clicked', self.toggle_mute_current_device_port)
+		self.icon.connect('clicked', self.on_icon_click)
 		self.voltext = gtk.Label()
 		self.voltext.set_width_chars(4)
 		self.label = gtk.Label()
@@ -129,20 +100,20 @@ class VolumeWindow(gui.Window):
 		frame.add(box)
 		self.add(frame)
 	
-	def toggle_mute_current_device_port(self, button):
+	def on_icon_click(self, button):
 		muted = button.get_data('muted')
-		pulseproxy.call('mute', self.current_pa_sink, not muted)
-		#self.update_icon(not muted)
+		pulseproxy.mute(self.current_pa_sink, not muted)
 	
-	def change_volume_current_device_port(self, range_obj, scroll_type, value):
-		pulseproxy.call('volume_set_all_chans', self.current_pa_sink, value/100)
+	def on_slider_change(self, range_obj, scroll_type, value):
+		if value >= 0:
+			pulseproxy.volume_set_all_chans(self.current_pa_sink, value/100)
+		return False
 	
 	def update(self, label, muted, volume):
 		self.scale.set_value(volume)
 		self.update_icon(muted)
 		self.voltext.set_text('%d%%' % volume)
 		self.label.set_text(label)
-		self.show_all()
 	
 	def update_icon(self, muted):
 		self.icon.set_data('muted', muted)
@@ -153,46 +124,22 @@ class VolumeWindow(gui.Window):
 		else:                    icon_variant = 'max'
 		self.icon.set_icon_name('stock_volume-%s' % icon_variant)
 
-class EmptyResponseError(Exception):
-	pass
 
 class PulseProxy(object):
 	def __init__(self):
-		self.child_pid = None
-	
-	def call(self, method, *args):
-		n_spawns = 0
-		if self.child_pid is None:
-			self.spawn()
-			n_spawns += 1
-		rpc = json.dumps({'method': method, 'args': args}, default=json_serializer)
-		while n_spawns < 2:
-			try:
-				self.wfile.write(rpc + "\n")
-				self.wfile.flush()
-				response = self.rfile.readline()
-				if response == '': raise EmptyResponseError
-				rpc_response = json.loads(response, object_hook=json_deserializer)
-				return rpc_response
-			except (IOError, OSError, EmptyResponseError) as exc:
-				self.spawn()
-				n_spawns += 1
-	
-	def spawn(self):
-		parent_sock, child_sock = socket.socketpair()
-		# TODO cleanup unused sockets
-		pid = os.fork()
-		if pid == 0:
-			parent_sock.close()
-			os.execve(sys.executable, [sys.executable, __file__, '--pulse-rpc', str(child_sock.fileno())], os.environ)
-			raise SystemExit(127)
+		self._pa = None
+	def _connect(self):
+		if self._pa is None or not self._pa.connected:
+			self._pa = pulsectl.Pulse(APPNAME+'.control')
+	def __getattr__(self, name):
+		self._connect()
+		return getattr(self._pa, name)
+	def __setattr__(self, name, value):
+		if name.startswith('_'):
+			object.__setattr__(self, name, value)
 		else:
-			self.child_pid = pid
-			child_sock.close()
-			self.rpc_sock = parent_sock
-			self.rfile = parent_sock.makefile('r')
-			self.wfile = parent_sock.makefile('w')
-
+			self._connect()
+			setattr(self._pa, name, value)
 
 
 
