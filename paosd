@@ -6,19 +6,56 @@ import socket
 import time
 import json
 import traceback
-import threading
 import pulsectl
-import gtk
-import hband_tools.gui as gui
 try:
 	import better_exchook
 except ImportError:
-	pass
-else:
-	better_exchook.install()
+	class DummyBetterExecHook(object):
+		def install(self):
+			pass
+	better_exchook = DummyBetterExecHook()
 
 
 APPNAME = 'paosd'
+
+
+def json_serializer(obj):
+	classname = obj.__class__.__name__
+	serialized = {'class': classname, 'object': {}}
+	if isinstance(obj, pulsectl.PulseSinkInfo):
+		serialized['object'] = {'name': obj.name}
+	return serialized
+
+def json_deserializer(d):
+	classname = d.get('class')
+	if classname == 'PulseSinkInfo':
+		d = TODO .get_sink_by_name(d['object']['name'])
+		#TODO dont pass PulseSinkInfo objects but FlatPulseSinkInfo
+		#or pass by object id and instanciate a proxy object in the parent...
+	return d
+
+if '--pulse-rpc' in sys.argv:
+	better_exchook.install()
+	child_sock_fd = int(sys.argv[2])
+	rfile = os.fdopen(child_sock_fd, 'r')
+	wfile = os.fdopen(child_sock_fd, 'w')
+	pa = pulsectl.Pulse(APPNAME)
+	while True:
+		line = rfile.readline()
+		if line == '': break
+		rpc = json.loads(line, object_hook=json_deserializer)
+		method = getattr(pa, rpc['method'])
+		answer = method(*rpc['args'])
+		wfile.write(json.dumps(answer, default=json_serializer) + "\n")
+		wfile.flush()
+	raise SystemExit(0)
+
+
+
+import threading
+import gtk
+import hband_tools.gui as gui
+better_exchook.install()
 
 
 def listen_pulse_events():
@@ -26,17 +63,11 @@ def listen_pulse_events():
 		if State['pulse_listener'] is None: State['pulse_listener'] = pulsectl.Pulse(APPNAME)
 		State['pulse_listener'].event_mask_set('sink')
 		State['pulse_listener'].event_callback_set(on_pulse_event)
-		while State['pause']:
-			print 'paused'
-			time.sleep(0.1)
-		print 'listening'
 		try:
 			State['pulse_listener'].event_listen(timeout=None)
 		except pulsectl.PulseDisconnected:
-			print 'disconnected'
 			State['pulse_listener'] = None
 		except:
-			print 'exception'
 			pass
 
 def on_pulse_event(event):
@@ -134,14 +165,14 @@ class PulseProxy(object):
 		if self.child_pid is None:
 			self.spawn()
 			n_spawns += 1
-		rpc = json.dumps({'method': method, 'args': args})
+		rpc = json.dumps({'method': method, 'args': args}, default=json_serializer)
 		while n_spawns < 2:
 			try:
 				self.wfile.write(rpc + "\n")
 				self.wfile.flush()
 				response = self.rfile.readline()
 				if response == '': raise EmptyResponseError
-				rpc_response = json.loads(response)
+				rpc_response = json.loads(response, object_hook=json_deserializer)
 				return rpc_response
 			except (IOError, OSError, EmptyResponseError) as exc:
 				self.spawn()
@@ -152,20 +183,9 @@ class PulseProxy(object):
 		# TODO cleanup unused sockets
 		pid = os.fork()
 		if pid == 0:
-			print "child spown"
 			parent_sock.close()
-			rfile = child_sock.makefile('r')
-			wfile = child_sock.makefile('w')
-			os.closerange(3, 65535)
-			pa = pulsectl.Pulse(APPNAME)
-			while True:
-				line = rfile.readline()
-				if line == '': break
-				print ">>>", line
-				rpc = json.loads(line)
-				answer = rpc['method'](*rpc['args'])
-				wfile.write(json.dumps(answer) + "\n")
-				wfile.flush()
+			os.execve(sys.executable, [sys.executable, __file__, '--pulse-rpc', str(child_sock.fileno())], os.environ)
+			raise SystemExit(127)
 		else:
 			self.child_pid = pid
 			child_sock.close()
@@ -175,9 +195,9 @@ class PulseProxy(object):
 
 
 
+
 State = {
 	'run': True,
-	'pause': False,
 	'pulse_listener': None,
 }
 
