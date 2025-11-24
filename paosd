@@ -58,20 +58,44 @@ def display_volume(pa_sink, device, device_port, muted, volume, has_activity):
 		gtk.threads_enter()
 		main_win.current_pa_sink = pa_sink
 		main_win.update(device + " - " + device_port, muted, volume, has_activity)
-		main_win.show_all()
-		# TODO timer to hide
 		gtk.threads_leave()
 		InfoDisplayedPerDevice[key] = info
 
+class Timer(object):
+	def __init__(self, timeout_sec, cb_func, *cb_args):
+		self.timeout_sec = timeout_sec
+		self.callback = cb_func
+		self.cb_args = cb_args
+		self.handle = None
+	def start(self):
+		self.handle = glib.timeout_add(int(self.timeout_sec * 1000), self.fire)
+	def stop(self):
+		if self.handle is not None:
+			glib.source_remove(self.handle)
+			self.handle = None
+	def restart(self):
+		self.stop()
+		self.start()
+	def fire(self):
+		self.stop()
+		self.callback(*self.cb_args)
+
 class VolumeWindow(gui.Window):
+	# TODO display multiple audio devices
+	
 	def __init__(self):
 		self.current_pa_sink = None
+		self.hide_timer = Timer(5.0, self.hide)
 		
 		super(VolumeWindow, self).__init__({'name': 'window.main', 'gtk-args': [gtk.WINDOW_TOPLEVEL]})
 		self.set_decorated(False)
 		self.set_skip_taskbar_hint(True)
 		self.set_skip_pager_hint(True)
 		self.set_keep_above(True)
+		self.add_events(gtk.gdk.BUTTON_RELEASE_MASK | gtk.gdk.ENTER_NOTIFY_MASK | gtk.gdk.LEAVE_NOTIFY_MASK)
+		self.connect_after('button-release-event', self.on_mouse_button_release)
+		self.connect_after('enter-notify-event', self.on_pointer_enter)
+		self.connect_after('leave-notify-event', self.on_pointer_leave)
 		
 		frame = gtk.Frame()
 		frame.set_shadow_type(gtk.SHADOW_OUT)
@@ -104,6 +128,19 @@ class VolumeWindow(gui.Window):
 		frame.add(box)
 		self.add(frame)
 	
+	def on_mouse_button_release(self, widget, event):
+		if event.button != gui.MOUSE_BUTTON_RIGHT: return
+		self.hide_timer.stop()
+		self.hide()
+	
+	def on_pointer_enter(self, widget, event):
+		if event.detail in [gtk.gdk.NOTIFY_NONLINEAR]:
+			self.hide_timer.stop()
+	
+	def on_pointer_leave(self, widget, event):
+		if event.detail in [gtk.gdk.NOTIFY_NONLINEAR]:
+			self.hide_timer.start()
+	
 	def on_icon_click(self, button):
 		muted = button.get_data('muted')
 		pulseproxy.mute(self.current_pa_sink, not muted)
@@ -122,6 +159,8 @@ class VolumeWindow(gui.Window):
 		else:
 			self.activity_indicator.clear()
 		self.label.set_text(label)
+		self.show_all()
+		self.hide_timer.restart()
 	
 	def update_icon(self, muted):
 		self.icon.set_data('muted', muted)
