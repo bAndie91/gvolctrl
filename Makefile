@@ -7,7 +7,7 @@ default:
 	false
 
 .PHONY: install
-install: /usr/local/bin/gvolctrl/etc/xdg/autostart/gvolctrl.desktop  /usr/local/bin/paosd
+install: /usr/local/bin/gvolctrl /etc/xdg/autostart/gvolctrl.desktop  /usr/local/bin/paosd
 
 /usr/local/bin/gvolctrl: deb/usr/bin/gvolctrl
 	$(INSTALL_WRAPPER) install $< $@
