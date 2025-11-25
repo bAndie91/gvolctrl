@@ -47,17 +47,20 @@ def on_pulse_event_in_gtk_thread():
 		muted = sink.mute
 		volume = sink.volume.value_flat * 100
 		volume = int(volume)
-		display_volume(sink, sink_desc, port_desc, muted, volume, sink.state._value == 'running')
+		display_volume(sink, sink_desc, port_desc, muted, volume)
+		gtk.threads_enter()
+		main_win.set_has_activity(sink.state._value == 'running') # TODO update this per-sink
+		gtk.threads_leave()
 
 InfoDisplayedPerDevice = {}
 
-def display_volume(pa_sink, device, device_port, muted, volume, has_activity):
+def display_volume(pa_sink, device, device_port, muted, volume):
 	key = (device, device_port)
-	info = (muted, volume, has_activity)
-	if InfoDisplayedPerDevice.get(key, (None, None, None)) != info:
+	info = (muted, volume)
+	if InfoDisplayedPerDevice.get(key, (None, None)) != info:
 		gtk.threads_enter()
 		main_win.current_pa_sink = pa_sink
-		main_win.update(device + " - " + device_port, muted, volume, has_activity)
+		main_win.update(device + " - " + device_port, muted, volume)
 		gtk.threads_leave()
 		InfoDisplayedPerDevice[key] = info
 
@@ -92,6 +95,8 @@ class VolumeWindow(gui.Window):
 		self.set_skip_taskbar_hint(True)
 		self.set_skip_pager_hint(True)
 		self.set_keep_above(True)
+		#self.set_focus_on_map(False)  # does not seem to work
+		self.set_type_hint(gtk.gdk.WINDOW_TYPE_HINT_NOTIFICATION)  # this does that the window does not get focus when mapped
 		self.add_events(gtk.gdk.BUTTON_RELEASE_MASK | gtk.gdk.ENTER_NOTIFY_MASK | gtk.gdk.LEAVE_NOTIFY_MASK)
 		self.connect_after('button-release-event', self.on_mouse_button_release)
 		self.connect_after('enter-notify-event', self.on_pointer_enter)
@@ -105,9 +110,9 @@ class VolumeWindow(gui.Window):
 		self.icon = gtk.ToolButton()
 		self.icon.connect('clicked', self.on_icon_click)
 		self.voltext = gtk.Label()
-		self.voltext.set_width_chars(4)
+		self.voltext.set_width_chars(5)
 		
-		self.scale = gtk.HScale(gtk.Adjustment(0.0, 0.0, 100.0, 1.0, 10.0, 0.0))
+		self.scale = gtk.HScale(gtk.Adjustment(value=0.0, lower=0.0, upper=100.0, step_incr=-1.0, page_incr=10.0, page_size=0.0))
 		self.scale.set_update_policy(gtk.UPDATE_CONTINUOUS)
 		self.scale.set_draw_value(False)
 		self.scale.set_inverted(False)
@@ -150,14 +155,10 @@ class VolumeWindow(gui.Window):
 			pulseproxy.volume_set_all_chans(self.current_pa_sink, value/100)
 		return False
 	
-	def update(self, label, muted, volume, has_activity):
+	def update(self, label, muted, volume):
 		self.scale.set_value(volume)
 		self.update_icon(muted)
 		self.voltext.set_text('%d%%' % volume)
-		if has_activity:
-			self.activity_indicator.icon = (gtk.STOCK_MEDIA_PLAY, gtk.ICON_SIZE_SMALL_TOOLBAR)
-		else:
-			self.activity_indicator.clear()
 		self.label.set_text(label)
 		self.show_all()
 		self.hide_timer.restart()
@@ -170,6 +171,12 @@ class VolumeWindow(gui.Window):
 		elif volume < 66:        icon_variant = 'med'
 		else:                    icon_variant = 'max'
 		self.icon.set_icon_name('stock_volume-%s' % icon_variant)
+	
+	def set_has_activity(self, has_activity):
+		if has_activity:
+			self.activity_indicator.icon = (gtk.STOCK_MEDIA_PLAY, gtk.ICON_SIZE_SMALL_TOOLBAR)
+		else:
+			self.activity_indicator.clear()
 
 
 class PulseProxy(object):
