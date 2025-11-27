@@ -83,20 +83,19 @@ class Timer(object):
 		self.stop()
 		self.callback(*self.cb_args)
 
+
 class VolumeWindow(gui.Window):
-	# TODO display multiple audio devices
-	
 	def __init__(self):
-		self.current_pa_sink = None
 		self.hide_timer = Timer(5.0, self.hide)
 		
-		super(VolumeWindow, self).__init__({'name': 'window.main', 'gtk-args': [gtk.WINDOW_TOPLEVEL]})
+		super(AudioDeviceMeterBox, self).__init__({'name': 'window.main', 'gtk-args': [gtk.WINDOW_TOPLEVEL]})
 		self.set_decorated(False)
 		self.set_skip_taskbar_hint(True)
 		self.set_skip_pager_hint(True)
 		self.set_keep_above(True)
 		#self.set_focus_on_map(False)  # does not seem to work
 		self.set_type_hint(gtk.gdk.WINDOW_TYPE_HINT_NOTIFICATION)  # this does that the window does not get focus when mapped
+		
 		self.add_events(gtk.gdk.BUTTON_RELEASE_MASK | gtk.gdk.ENTER_NOTIFY_MASK | gtk.gdk.LEAVE_NOTIFY_MASK)
 		self.connect_after('button-release-event', self.on_mouse_button_release)
 		self.connect_after('enter-notify-event', self.on_pointer_enter)
@@ -104,7 +103,12 @@ class VolumeWindow(gui.Window):
 		
 		frame = gtk.Frame()
 		frame.set_shadow_type(gtk.SHADOW_OUT)
-		box = gtk.VBox(homogeneous=False, spacing=0)
+
+
+class AudioDeviceMeterBox(gtk.Vbox):
+	def __init__(self):
+		super(AudioDeviceMeterBox, self).__init__(homogeneous=False, spacing=0)
+		
 		hbox = gtk.HBox(homogeneous=False, spacing=5)
 
 		self.icon = gtk.ToolButton()
