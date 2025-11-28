@@ -23,6 +23,8 @@ import hband_tools.gui as gui
 
 
 APPNAME = 'paosd'
+MainWindowHideTimeoutSec = 5.0
+MainWindowDefaultWidthPx = 250
 
 
 class Timer(object):
@@ -72,7 +74,7 @@ def on_pulse_event_in_gtk_thread():
 		device_info = (pa_sink.mute, volume)
 		if InfoDisplayedPerDevice.get(device_key, (None, None)) != device_info:
 			gtk.threads_enter()
-			main_win.update(pa_sink, label = sink_desc + " » " + port_desc, muted = pa_sink.mute, volume = volume)
+			main_win.update(pa_sink, label = sink_desc + " ➤ " + port_desc, muted = pa_sink.mute, volume = volume)
 			gtk.threads_leave()
 			InfoDisplayedPerDevice[device_key] = device_info
 	media_streams_per_sink = {}
@@ -80,29 +82,31 @@ def on_pulse_event_in_gtk_thread():
 		sink_name = pulseproxy.sink_info(index=media_stream.sink).name
 		if sink_name not in media_streams_per_sink: media_streams_per_sink[sink_name] = []
 		media_streams_per_sink[sink_name].append({
+			'sink_input_index': media_stream.index,
 			'name': media_stream.name,
 			'prog': media_stream.proplist['application.name'],
 			'pid':  media_stream.proplist['application.process.id'],
 			'icon': media_stream.proplist['application.icon_name'],
 		})
 	gtk.threads_enter()
-	for sink_name, media_streams in media_streams_per_sink.items():
-		main_win.update_silent(pulseproxy.get_sink_by_name(sink_name), media_streams = media_streams)
+	for pa_sink in pa_sinks:
+		main_win.update_silent(pa_sink, media_streams = media_streams_per_sink.get(pa_sink.name, []))
 	gtk.threads_leave()
 
 
 class VolumeWindow(gui.Window):
 	def __init__(self):
-		self.hide_timer = Timer(5.0, self.hide)
+		self.hide_timer = Timer(MainWindowHideTimeoutSec, self.hide)
 		self.volume_meter = {}
 		
-		super(VolumeWindow, self).__init__({'name': 'window.main', 'gtk-args': [gtk.WINDOW_TOPLEVEL]})
+		super(VolumeWindow, self).__init__({'name': 'window.main', 'default-size': (MainWindowDefaultWidthPx, -1), 'gtk-args': [gtk.WINDOW_TOPLEVEL]})
 		self.set_decorated(False)
 		self.set_skip_taskbar_hint(True)
 		self.set_skip_pager_hint(True)
 		self.set_keep_above(True)
 		self.set_accept_focus(False)
 		self.set_type_hint(gtk.gdk.WINDOW_TYPE_HINT_UTILITY)
+		self.set_resizable(True)
 		
 		self.add_events(gtk.gdk.BUTTON_RELEASE_MASK | gtk.gdk.ENTER_NOTIFY_MASK | gtk.gdk.LEAVE_NOTIFY_MASK)
 		self.connect_after('button-release-event', self.on_mouse_button_release)
@@ -112,7 +116,7 @@ class VolumeWindow(gui.Window):
 		frame = gtk.Frame()
 		frame.set_shadow_type(gtk.SHADOW_OUT)
 		self.add(frame)
-		self.vbox = gtk.VBox(homogeneous=False, spacing=3)
+		self.vbox = gtk.VBox(homogeneous=True, spacing=3)
 		frame.add(self.vbox)
 	
 	def on_mouse_button_release(self, widget, event):
@@ -135,8 +139,11 @@ class VolumeWindow(gui.Window):
 	def update_silent(self, pa_sink, **args):
 		if pa_sink.name not in self.volume_meter:
 			self.volume_meter[pa_sink.name] = AudioDeviceMeterBox(pa_sink)
-			self.vbox.pack_start(self.volume_meter[pa_sink.name], expand=False, fill=False, padding=0)
+			self.vbox.pack_start(self.volume_meter[pa_sink.name], expand=False, padding=0)
 		self.volume_meter[pa_sink.name].update(**args)
+	
+	def get_all_meters(self):
+		return self.volume_meter.values()
 
 
 class AudioDeviceMeterBox(gtk.VBox):
@@ -146,7 +153,7 @@ class AudioDeviceMeterBox(gtk.VBox):
 		
 		super(AudioDeviceMeterBox, self).__init__(homogeneous=False, spacing=0)
 		hbox = gtk.HBox(homogeneous=False, spacing=5)
-		self.pack_start(hbox, expand=False, fill=False, padding=0)
+		self.pack_start(hbox, expand=False, padding=0)
 		
 		self.mute_button = gtk.ToolButton()
 		self.mute_button.connect('clicked', self.on_mute_button_click)
@@ -157,22 +164,22 @@ class AudioDeviceMeterBox(gtk.VBox):
 		self.slider.set_update_policy(gtk.UPDATE_CONTINUOUS)
 		self.slider.set_draw_value(False)
 		self.slider.set_inverted(False)
-		self.slider.set_size_request(120, 0)
 		self.slider.connect('change-value', self.on_slider_change)
 		self.slider.connect('value-changed', self.on_slider_changed)
 		
 		# TODO add set-default radio button
 		
 		self.media_streams_box = gtk.HBox(homogeneous=True, spacing=2)
-		self.media_streams_box.set_size_request(*gtk.icon_size_lookup(gtk.ICON_SIZE_SMALL_TOOLBAR))
 		self.label = gtk.Label()
 		self.label.set_alignment(0, 0.5)
 		
-		hbox.pack_start(self.mute_button, expand=False, fill=False, padding=0)
-		hbox.pack_start(self.voltext, expand=False, fill=False, padding=0)
+		# TODO sink_port selector
+		
+		hbox.pack_start(self.mute_button, expand=False, padding=0)
+		hbox.pack_start(self.voltext, expand=False, padding=0)
 		hbox.pack_start(self.slider, expand=True, fill=True, padding=0)
-		hbox.pack_start(self.media_streams_box, expand=False, fill=False, padding=0)
-		self.pack_start(self.label, expand=True, fill=True, padding=0)
+		hbox.pack_start(self.media_streams_box, expand=False, padding=0)
+		self.pack_start(self.label, expand=False, padding=0)
 		self.show_all()
 	
 	def on_mute_button_click(self, button):
@@ -206,17 +213,37 @@ class AudioDeviceMeterBox(gtk.VBox):
 		elif volume < 66:        icon_variant = 'med'
 		else:                    icon_variant = 'max'
 		self.mute_button.set_icon_name('stock_volume-%s' % icon_variant)
+	
+	def set_media_streams_box_width(self, px):
+		self.media_streams_box.set_size_request(px, -1)
 
 
 class MediaClientButton(gtk.ToolButton):
 	def __init__(self, media_stream):
+		self._sink_input_index = media_stream['sink_input_index']
 		super(MediaClientButton, self).__init__()
+		self.connect('size-allocate', self.on_size_change)
+		self.set_icon_name(gtk.STOCK_MEDIA_PLAY)
+		# TODO
+		self.connect('clicked', self.on_clicked)
 		#mute on click...
 		#DnD...
-		# default icon (gtk.STOCK_MEDIA_PLAY, gtk.ICON_SIZE_SMALL_TOOLBAR)
-		self.set_icon_name(media_stream['icon'])
-		# tooltip progname, name
+		if media_stream.get('icon'):
+			self.set_icon_name(media_stream['icon'])
+		# tooltip progname, stream name
 		self.show_all()
+	
+	def on_size_change(self, widget, allocation):
+		[ meter.set_media_streams_box_width(allocation.width) for meter in main_win.get_all_meters() ]
+		return False
+	
+	@property
+	def sink_input(self):
+		return pulseproxy.sink_input_info(self._sink_input_index)
+	
+	def on_clicked(self, widget):
+		pulseproxy.sink_input_mute(self.sink_input.index, not self.sink_input.mute)
+
 
 class PulseProxy(object):
 	def __init__(self):
