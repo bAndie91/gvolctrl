@@ -98,7 +98,6 @@ class VolumeWindow(gui.Window):
 		self.connect_after('button-release-event', self.on_mouse_button_release)
 		self.connect_after('enter-notify-event', self.on_pointer_enter)
 		self.connect_after('leave-notify-event', self.on_pointer_leave)
-		# TODO implement move-on-drag because WM's alt-drag does not work on notification type of window
 		
 		frame = gtk.Frame()
 		frame.set_shadow_type(gtk.SHADOW_OUT)
@@ -112,8 +111,7 @@ class VolumeWindow(gui.Window):
 		self.hide()
 	
 	def on_pointer_enter(self, widget, event):
-		if event.detail in [gtk.gdk.NOTIFY_NONLINEAR]:
-			self.hide_timer.stop()
+		self.hide_timer.stop()
 	
 	def on_pointer_leave(self, widget, event):
 		if event.detail in [gtk.gdk.NOTIFY_NONLINEAR]:
