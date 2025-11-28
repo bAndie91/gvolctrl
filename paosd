@@ -1,4 +1,5 @@
 #!/usr/bin/env python2
+# -*- coding: utf-8 -*-
 
 import sys
 import os
@@ -59,26 +60,35 @@ def listen_pulse_events():
 def on_pulse_event(event):
 	glib.idle_add(on_pulse_event_in_gtk_thread, priority=glib.PRIORITY_DEFAULT_IDLE)
 
-def on_pulse_event_in_gtk_thread():
-	for sink in pulseproxy.sink_list():
-		sink_desc = sink.description
-		port_desc = sink.port_active.description
-		muted = sink.mute
-		volume = sink.volume.value_flat * 100
-		volume = int(volume)
-		display_volume(sink, sink_desc, port_desc, muted, volume, sink.state._value == 'running')
-
 InfoDisplayedPerDevice = {}
 
-def display_volume(pa_sink, device, device_port, muted, volume, has_activity):
-	key = (device, device_port)
-	info = (muted, volume)
-	if InfoDisplayedPerDevice.get(key, (None, None)) != info:
-		gtk.threads_enter()
-		main_win.update(pa_sink, label = device + " - " + device_port, muted = muted, volume = volume)
-		gtk.threads_leave()
-		InfoDisplayedPerDevice[key] = info
-	main_win.update_silent(pa_sink, has_activity = has_activity)
+def on_pulse_event_in_gtk_thread():
+	pa_sinks = pulseproxy.sink_list()
+	for pa_sink in pa_sinks:
+		sink_desc = pa_sink.description
+		port_desc = pa_sink.port_active.description
+		volume = int(pa_sink.volume.value_flat * 100)
+		device_key = (sink_desc, port_desc)
+		device_info = (pa_sink.mute, volume)
+		if InfoDisplayedPerDevice.get(device_key, (None, None)) != device_info:
+			gtk.threads_enter()
+			main_win.update(pa_sink, label = sink_desc + " » " + port_desc, muted = pa_sink.mute, volume = volume)
+			gtk.threads_leave()
+			InfoDisplayedPerDevice[device_key] = device_info
+	media_streams_per_sink = {}
+	for media_stream in pulseproxy.sink_input_list():
+		sink_name = pulseproxy.sink_info(index=media_stream.sink).name
+		if sink_name not in media_streams_per_sink: media_streams_per_sink[sink_name] = []
+		media_streams_per_sink[sink_name].append({
+			'name': media_stream.name,
+			'prog': media_stream.proplist['application.name'],
+			'pid':  media_stream.proplist['application.process.id'],
+			'icon': media_stream.proplist['application.icon_name'],
+		})
+	gtk.threads_enter()
+	for sink_name, media_streams in media_streams_per_sink.items():
+		main_win.update_silent(pulseproxy.get_sink_by_name(sink_name), media_streams = media_streams)
+	gtk.threads_leave()
 
 
 class VolumeWindow(gui.Window):
@@ -138,8 +148,8 @@ class AudioDeviceMeterBox(gtk.VBox):
 		hbox = gtk.HBox(homogeneous=False, spacing=5)
 		self.pack_start(hbox, expand=False, fill=False, padding=0)
 		
-		self.icon = gtk.ToolButton()
-		self.icon.connect('clicked', self.on_icon_click)
+		self.mute_button = gtk.ToolButton()
+		self.mute_button.connect('clicked', self.on_mute_button_click)
 		self.voltext = gtk.Label()
 		self.voltext.set_width_chars(5)
 		
@@ -151,19 +161,21 @@ class AudioDeviceMeterBox(gtk.VBox):
 		self.slider.connect('change-value', self.on_slider_change)
 		self.slider.connect('value-changed', self.on_slider_changed)
 		
-		self.activity_indicator = gui.Image()
-		self.activity_indicator.set_size_request(*gtk.icon_size_lookup(gtk.ICON_SIZE_SMALL_TOOLBAR))
+		# TODO add set-default radio button
+		
+		self.media_streams_box = gtk.HBox(homogeneous=True, spacing=2)
+		self.media_streams_box.set_size_request(*gtk.icon_size_lookup(gtk.ICON_SIZE_SMALL_TOOLBAR))
 		self.label = gtk.Label()
 		self.label.set_alignment(0, 0.5)
 		
-		hbox.pack_start(self.icon, expand=False, fill=False, padding=0)
+		hbox.pack_start(self.mute_button, expand=False, fill=False, padding=0)
 		hbox.pack_start(self.voltext, expand=False, fill=False, padding=0)
 		hbox.pack_start(self.slider, expand=True, fill=True, padding=0)
-		hbox.pack_start(self.activity_indicator, expand=False, fill=False, padding=0)
+		hbox.pack_start(self.media_streams_box, expand=False, fill=False, padding=0)
 		self.pack_start(self.label, expand=True, fill=True, padding=0)
 		self.show_all()
 	
-	def on_icon_click(self, button):
+	def on_mute_button_click(self, button):
 		pulseproxy.mute(self.pa_sink, not self.muted)
 	
 	def on_slider_change(self, range_obj, scroll_type, value):
@@ -178,27 +190,33 @@ class AudioDeviceMeterBox(gtk.VBox):
 		if 'volume' in args:
 			self.slider.set_value(args['volume'])
 		if 'muted' in args:
-			self.update_icon(args['muted'])
+			self.update_mute_button(args['muted'])
 		if 'label' in args:
 			self.label.set_text(args['label'])
-		if 'has_activity' in args:
-			self.set_has_activity(args['has_activity'])
+		if 'media_streams' in args:
+			for child in self.media_streams_box.children(): self.media_streams_box.remove(child)
+			for media_stream in args['media_streams']:
+				self.media_streams_box.add(MediaClientButton(media_stream))
 	
-	def update_icon(self, muted):
+	def update_mute_button(self, muted):
 		self.muted = muted
 		volume = self.slider.get_value()
 		if muted or volume <= 0: icon_variant = 'mute'
 		elif volume < 33:        icon_variant = 'min'
 		elif volume < 66:        icon_variant = 'med'
 		else:                    icon_variant = 'max'
-		self.icon.set_icon_name('stock_volume-%s' % icon_variant)
-	
-	def set_has_activity(self, has_activity):
-		if has_activity:
-			self.activity_indicator.icon = (gtk.STOCK_MEDIA_PLAY, gtk.ICON_SIZE_SMALL_TOOLBAR)
-		else:
-			self.activity_indicator.clear()
+		self.mute_button.set_icon_name('stock_volume-%s' % icon_variant)
 
+
+class MediaClientButton(gtk.ToolButton):
+	def __init__(self, media_stream):
+		super(MediaClientButton, self).__init__()
+		#mute on click...
+		#DnD...
+		# default icon (gtk.STOCK_MEDIA_PLAY, gtk.ICON_SIZE_SMALL_TOOLBAR)
+		self.set_icon_name(media_stream['icon'])
+		# tooltip progname, name
+		self.show_all()
 
 class PulseProxy(object):
 	def __init__(self):
