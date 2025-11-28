@@ -230,7 +230,8 @@ class MediaClientButton(gtk.ToolButton):
 		#DnD...
 		if media_stream.get('icon'):
 			self.set_icon_name(media_stream['icon'])
-		# tooltip progname, stream name
+		# TODO grey out icon if muted
+		self.set_tooltip_text(media_stream.get('prog', '') + ' ➤ ' + media_stream.get('name', ''))
 		self.show_all()
 	
 	def on_size_change(self, widget, allocation):
