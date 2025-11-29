@@ -98,7 +98,8 @@ def on_pulse_event_in_gtk_thread():
 class VolumeWindow(gui.Window):
 	def __init__(self):
 		self.hide_timer = Timer(MainWindowHideTimeoutSec, self.hide)
-		self.volume_meter = {}
+		self.device_box = {}
+		self._media_stream_boxes_width = 0
 		
 		super(VolumeWindow, self).__init__({'name': 'window.main', 'default-size': (MainWindowDefaultWidthPx, -1), 'gtk-args': [gtk.WINDOW_TOPLEVEL]})
 		self.set_decorated(False)
@@ -138,21 +139,37 @@ class VolumeWindow(gui.Window):
 		self.show_all()
 	
 	def update_silent(self, pa_sink, **args):
-		if pa_sink.name not in self.volume_meter:
-			self.volume_meter[pa_sink.name] = AudioDeviceMeterBox(pa_sink)
-			self.vbox.pack_start(self.volume_meter[pa_sink.name], expand=False, padding=0)
-		self.volume_meter[pa_sink.name].update(**args)
+		if pa_sink.name not in self.device_box.keys():
+			self.device_box[pa_sink.name] = AudioDeviceBox(pa_sink)
+			self.vbox.pack_start(self.device_box[pa_sink.name], expand=False, padding=0)
+		self.device_box[pa_sink.name].update(**args)
 	
-	def get_all_meters(self):
-		return self.volume_meter.values()
+	def on_media_stream_box_size_change(self, widget, allocation):
+		max_width = allocation.width
+		for device_box in self.device_box.values():
+			if device_box is not widget:
+				this_alloc = device_box.media_streams_box.get_allocation()
+				if this_alloc.width > max_width:
+					max_width = this_alloc.width
+		for device_box in self.device_box.values():
+			if device_box is not widget:
+				if device_box.media_streams_box.get_allocation().width != max_width:
+					device_box.media_streams_box.set_size_request(max_width, -1)
+		diff = max_width - self._media_stream_boxes_width
+		self._media_stream_boxes_width = max_width
+		if diff != 0:
+			W, H = self.get_size()
+			print 'diff', diff
+			self.resize(W + diff, H)
+		return False
 
 
-class AudioDeviceMeterBox(gtk.VBox):
+class AudioDeviceBox(gtk.VBox):
 	def __init__(self, sink):
 		self.pa_sink = sink
 		self.muted = None
 		
-		super(AudioDeviceMeterBox, self).__init__(homogeneous=False, spacing=0)
+		super(AudioDeviceBox, self).__init__(homogeneous=False, spacing=0)
 		hbox = gtk.HBox(homogeneous=False, spacing=5)
 		self.pack_start(hbox, expand=False, padding=0)
 		
@@ -213,10 +230,11 @@ class AudioDeviceMeterBox(gtk.VBox):
 		else:                    icon_variant = 'max'
 		self.mute_button.set_icon_name('stock_volume-%s' % icon_variant)
 
+
 class MediaStreamsBox(gtk.HBox):
 	def __init__(self):	
 		super(MediaStreamsBox, self).__init__(homogeneous=True, spacing=2)
-		self.connect('size-allocate', self.on_size_change)
+		self.connect('size-allocate', main_win.on_media_stream_box_size_change)
 		self.stream_widgets = {}
 	
 	def update_streams(self, streams):
@@ -234,9 +252,6 @@ class MediaStreamsBox(gtk.HBox):
 				self.remove(stream_widget)
 				del self.stream_widgets[sink_input_index]
 	
-	def on_size_change(self, widget, allocation):
-		[ meter.media_streams_box.set_size_request(allocation.width, -1) for meter in main_win.get_all_meters() if meter.media_streams_box is not self ]
-		return False
 
 
 class MediaStreamButton(gtk.ToggleButton):
