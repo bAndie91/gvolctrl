@@ -238,26 +238,39 @@ class MediaStreamsBox(gtk.HBox):
 		return False
 
 
-class MediaStreamButton(gtk.ToggleToolButton):
+class MediaStreamButton(gtk.ToggleButton):
 	def __init__(self, media_stream):
-		print media_stream
 		self._sink_input_index = media_stream['sink_input_index']
 		super(MediaStreamButton, self).__init__()
-		self.set_icon_name(gtk.STOCK_MEDIA_PLAY)
+		self._programatic_state_change_in_progress = None
 		self.connect('clicked', self.on_clicked)
-		#DnD to change sink...
-		if media_stream.get('icon'):
-			self.set_icon_name(media_stream['icon'])
-		self.set_active(not self.sink_input.mute)
-		self.set_tooltip_text(media_stream.get('prog', '') + ' ➤ ' + media_stream.get('name', ''))
+		self.set_image(gtk.Image())
+		self.update(media_stream)
 		self.show_all()
+	
+	def set_icon_name(self, icon_name):
+		self.get_image().set_from_icon_name(icon_name, gtk.ICON_SIZE_LARGE_TOOLBAR)
 	
 	@property
 	def sink_input(self):
 		return pulseproxy.sink_input_info(self._sink_input_index)
 	
 	def on_clicked(self, widget):
-		pulseproxy.sink_input_mute(self.sink_input.index, not self.sink_input.mute)
+		if not self._programatic_state_change_in_progress:
+			pulseproxy.sink_input_mute(self.sink_input.index, not self.get_active())
+	
+	def set_active(self, active_state):
+		self._programatic_state_change_in_progress = True
+		super(MediaStreamButton, self).set_active(active_state)
+		self._programatic_state_change_in_progress = False
+	
+	def update(self, media_stream):
+		self.set_icon_name(gtk.STOCK_MEDIA_PLAY)
+		#DnD to change sink...
+		if media_stream.get('icon'):
+			self.set_icon_name(media_stream['icon'])
+		self.set_active(not self.sink_input.mute)
+		self.set_tooltip_text(media_stream.get('prog', '') + ' ➤ ' + media_stream.get('name', ''))
 
 
 class PulseProxy(object):
