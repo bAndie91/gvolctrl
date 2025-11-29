@@ -50,7 +50,7 @@ class Timer(object):
 def listen_pulse_events():
 	while State['run']:
 		if State['pulse_listener'] is None: State['pulse_listener'] = pulsectl.Pulse(APPNAME+'.listen')
-		State['pulse_listener'].event_mask_set('sink')
+		State['pulse_listener'].event_mask_set('sink', 'client', 'sink_input')
 		State['pulse_listener'].event_callback_set(on_pulse_event)
 		try:
 			State['pulse_listener'].event_listen(timeout=None)
@@ -232,6 +232,7 @@ class MediaStreamsBox(gtk.HBox):
 		for sink_input_index, stream_widget in self.stream_widgets.items():
 			if sink_input_index not in only_stream_indices:
 				self.remove(stream_widget)
+				del self.stream_widgets[sink_input_index]
 	
 	def on_size_change(self, widget, allocation):
 		[ meter.media_streams_box.set_size_request(allocation.width, -1) for meter in main_win.get_all_meters() if meter.media_streams_box is not self ]
