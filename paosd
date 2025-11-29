@@ -77,6 +77,7 @@ def on_pulse_event_in_gtk_thread():
 			main_win.update(pa_sink, label = sink_desc + " ➤ " + port_desc, muted = pa_sink.mute, volume = volume)
 			gtk.threads_leave()
 			InfoDisplayedPerDevice[device_key] = device_info
+			# TODO update window even when the sink port changes
 	media_streams_per_sink = {}
 	for media_stream in pulseproxy.sink_input_list():
 		sink_name = pulseproxy.sink_info(index=media_stream.sink).name
@@ -169,7 +170,7 @@ class AudioDeviceMeterBox(gtk.VBox):
 		
 		# TODO add set-default radio button
 		
-		self.media_streams_box = gtk.HBox(homogeneous=True, spacing=2)
+		self.media_streams_box = MediaStreamsBox()
 		self.label = gtk.Label()
 		self.label.set_alignment(0, 0.5)
 		
@@ -201,9 +202,7 @@ class AudioDeviceMeterBox(gtk.VBox):
 		if 'label' in args:
 			self.label.set_text(args['label'])
 		if 'media_streams' in args:
-			for child in self.media_streams_box.children(): self.media_streams_box.remove(child)
-			for media_stream in args['media_streams']:
-				self.media_streams_box.add(MediaClientButton(media_stream))
+			self.media_streams_box.update_streams(args['media_streams'])
 	
 	def update_mute_button(self, muted):
 		self.muted = muted
@@ -213,30 +212,45 @@ class AudioDeviceMeterBox(gtk.VBox):
 		elif volume < 66:        icon_variant = 'med'
 		else:                    icon_variant = 'max'
 		self.mute_button.set_icon_name('stock_volume-%s' % icon_variant)
-	
-	def set_media_streams_box_width(self, px):
-		self.media_streams_box.set_size_request(px, -1)
 
-
-class MediaClientButton(gtk.ToolButton):
-	def __init__(self, media_stream):
-		self._sink_input_index = media_stream['sink_input_index']
-		super(MediaClientButton, self).__init__()
+class MediaStreamsBox(gtk.HBox):
+	def __init__(self):	
+		super(MediaStreamsBox, self).__init__(homogeneous=True, spacing=2)
 		self.connect('size-allocate', self.on_size_change)
-		self.set_icon_name(gtk.STOCK_MEDIA_PLAY)
-		# TODO
-		self.connect('clicked', self.on_clicked)
-		#mute on click...
-		#DnD...
-		if media_stream.get('icon'):
-			self.set_icon_name(media_stream['icon'])
-		# TODO grey out icon if muted
-		self.set_tooltip_text(media_stream.get('prog', '') + ' ➤ ' + media_stream.get('name', ''))
-		self.show_all()
+		self.stream_widgets = {}
+	
+	def update_streams(self, streams):
+		only_stream_indices = []
+		for stream in streams:
+			sink_input_index = stream['sink_input_index']
+			if sink_input_index in self.stream_widgets.keys():
+				self.stream_widgets[sink_input_index].update(stream)
+			else:
+				self.stream_widgets[sink_input_index] = MediaStreamButton(stream)
+				self.pack_start(self.stream_widgets[sink_input_index], expand=False, padding=0)
+			only_stream_indices.append(sink_input_index)
+		for sink_input_index, stream_widget in self.stream_widgets.items():
+			if sink_input_index not in only_stream_indices:
+				self.remove(stream_widget)
 	
 	def on_size_change(self, widget, allocation):
-		[ meter.set_media_streams_box_width(allocation.width) for meter in main_win.get_all_meters() ]
+		[ meter.media_streams_box.set_size_request(allocation.width, -1) for meter in main_win.get_all_meters() if meter.media_streams_box is not self ]
 		return False
+
+
+class MediaStreamButton(gtk.ToggleToolButton):
+	def __init__(self, media_stream):
+		print media_stream
+		self._sink_input_index = media_stream['sink_input_index']
+		super(MediaStreamButton, self).__init__()
+		self.set_icon_name(gtk.STOCK_MEDIA_PLAY)
+		self.connect('clicked', self.on_clicked)
+		#DnD to change sink...
+		if media_stream.get('icon'):
+			self.set_icon_name(media_stream['icon'])
+		self.set_active(not self.sink_input.mute)
+		self.set_tooltip_text(media_stream.get('prog', '') + ' ➤ ' + media_stream.get('name', ''))
+		self.show_all()
 	
 	@property
 	def sink_input(self):
