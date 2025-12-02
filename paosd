@@ -99,7 +99,6 @@ class VolumeWindow(gui.Window):
 	def __init__(self):
 		self.hide_timer = Timer(MainWindowHideTimeoutSec, self.hide)
 		self.device_box = {}
-		self._media_stream_boxes_width = 0
 		
 		super(VolumeWindow, self).__init__({'name': 'window.main', 'default-size': (MainWindowDefaultWidthPx, -1), 'gtk-args': [gtk.WINDOW_TOPLEVEL]})
 		self.set_decorated(False)
@@ -120,6 +119,8 @@ class VolumeWindow(gui.Window):
 		self.add(frame)
 		self.vbox = gtk.VBox(homogeneous=True, spacing=3)
 		frame.add(self.vbox)
+		self.media_streams_boxes_sizegroup = gtk.SizeGroup(gtk.SIZE_GROUP_HORIZONTAL)
+		self._media_stream_boxes_width = 0
 	
 	def on_mouse_button_release(self, widget, event):
 		if event.button != gui.MOUSE_BUTTON_RIGHT: return
@@ -140,34 +141,26 @@ class VolumeWindow(gui.Window):
 	
 	def update_silent(self, pa_sink, **args):
 		if pa_sink.name not in self.device_box.keys():
-			self.device_box[pa_sink.name] = AudioDeviceBox(pa_sink)
+			self.device_box[pa_sink.name] = AudioDeviceBox(pa_sink, self)
 			self.vbox.pack_start(self.device_box[pa_sink.name], expand=False, padding=0)
 		self.device_box[pa_sink.name].update(**args)
 	
 	def on_media_stream_box_size_change(self, widget, allocation):
-		max_width = allocation.width
-		for device_box in self.device_box.values():
-			if device_box is not widget:
-				this_alloc = device_box.media_streams_box.get_allocation()
-				if this_alloc.width > max_width:
-					max_width = this_alloc.width
-		for device_box in self.device_box.values():
-			if device_box is not widget:
-				if device_box.media_streams_box.get_allocation().width != max_width:
-					device_box.media_streams_box.set_size_request(max_width, -1)
-		diff = max_width - self._media_stream_boxes_width
-		self._media_stream_boxes_width = max_width
+		new_width = allocation.width
+		diff = new_width - self._media_stream_boxes_width
+		self._media_stream_boxes_width = new_width
 		if diff != 0:
 			W, H = self.get_size()
-			print 'diff', diff
+			print W, H, 'w-diff', diff
 			self.resize(W + diff, H)
 		return False
 
 
 class AudioDeviceBox(gtk.VBox):
-	def __init__(self, sink):
+	def __init__(self, sink, parent):
 		self.pa_sink = sink
 		self.muted = None
+		self._parent = parent
 		
 		super(AudioDeviceBox, self).__init__(homogeneous=False, spacing=0)
 		hbox = gtk.HBox(homogeneous=False, spacing=5)
@@ -187,7 +180,8 @@ class AudioDeviceBox(gtk.VBox):
 		
 		# TODO add set-default radio button
 		
-		self.media_streams_box = MediaStreamsBox()
+		self.media_streams_box = MediaStreamsBox(parent=self)
+		self._parent.media_streams_boxes_sizegroup.add_widget(self.media_streams_box)
 		self.label = gtk.Label()
 		self.label.set_alignment(0, 0.5)
 		
@@ -232,10 +226,14 @@ class AudioDeviceBox(gtk.VBox):
 
 
 class MediaStreamsBox(gtk.HBox):
-	def __init__(self):	
+	def __init__(self, parent=None):
+		self._devicebox = parent
 		super(MediaStreamsBox, self).__init__(homogeneous=True, spacing=2)
-		self.connect('size-allocate', main_win.on_media_stream_box_size_change)
+		self.connect('size-allocate', self._devicebox._parent.on_media_stream_box_size_change)
 		self.stream_widgets = {}
+	
+	def __repr__(self):
+		return "<%s sink=%s>" % (self.__class__.__name__, self._devicebox.pa_sink.name)
 	
 	def update_streams(self, streams):
 		only_stream_indices = []
@@ -251,7 +249,6 @@ class MediaStreamsBox(gtk.HBox):
 			if sink_input_index not in only_stream_indices:
 				self.remove(stream_widget)
 				del self.stream_widgets[sink_input_index]
-	
 
 
 class MediaStreamButton(gtk.ToggleButton):
@@ -269,7 +266,7 @@ class MediaStreamButton(gtk.ToggleButton):
 	
 	@property
 	def sink_input(self):
-		return pulseproxy.sink_input_info(self._sink_input_index)
+		return pulseproxy.sink_input_info(self._sink_input_index+100)
 	
 	def on_clicked(self, widget):
 		if not self._programatic_state_change_in_progress:
@@ -285,7 +282,10 @@ class MediaStreamButton(gtk.ToggleButton):
 		#DnD to change sink...
 		if media_stream.get('icon'):
 			self.set_icon_name(media_stream['icon'])
-		self.set_active(not self.sink_input.mute)
+		try:
+			self.set_active(not self.sink_input.mute)
+		except pulsectl.pulsectl.PulseError:
+			pass
 		self.set_tooltip_text(media_stream.get('prog', '') + ' ➤ ' + media_stream.get('name', ''))
 
 
