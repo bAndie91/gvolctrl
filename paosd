@@ -90,6 +90,7 @@ def on_pulse_event_in_gtk_thread():
 			'pid':  media_stream.proplist['application.process.id'],
 			'icon': media_stream.proplist['application.icon_name'],
 		})
+		# TODO popup when new media stream appear
 	gtk.threads_enter()
 	for pa_sink in pa_sinks:
 		main_win.update_silent(pa_sink, media_streams = media_streams_per_sink.get(pa_sink.name, []))
@@ -97,6 +98,10 @@ def on_pulse_event_in_gtk_thread():
 
 
 class VolumeWindow(gui.Window):
+	__gsignals__ = {
+		'media-stream-boxes-width-changed': (gobject.SIGNAL_RUN_LAST, gobject.TYPE_NONE, (gobject.TYPE_INT,)),
+	}
+	
 	def __init__(self):
 		self.hide_timer = Timer(MainWindowHideTimeoutSec, self.hide)
 		self.device_box = {}
@@ -120,8 +125,15 @@ class VolumeWindow(gui.Window):
 		self.add(frame)
 		self.vbox = gtk.VBox(homogeneous=True, spacing=3)
 		frame.add(self.vbox)
-		self.media_streams_boxes_sizegroup = gtk.SizeGroup(gtk.SIZE_GROUP_HORIZONTAL)
+		
 		self._media_stream_boxes_width = 0
+		self.media_streams_boxes_sizegroup = gtk.SizeGroup(gtk.SIZE_GROUP_HORIZONTAL)
+		self.media_streams_boxes_placeholder = gtk.HBox()
+		self.vbox.pack_start(self.media_streams_boxes_placeholder, expand=False, padding=0)
+		self.media_streams_boxes_sizegroup.add_widget(self.media_streams_boxes_placeholder)
+		self.property_persistor.add_properties([
+			('media-stream-boxes-width', 'media-stream-boxes-width-changed', lambda widget, width: width, lambda widget, width: widget.set_media_stream_boxes_width(width))
+		])
 	
 	def on_mouse_button_release(self, widget, event):
 		if event.button != gui.MOUSE_BUTTON_RIGHT: return
@@ -146,14 +158,35 @@ class VolumeWindow(gui.Window):
 			self.vbox.pack_start(self.device_box[pa_sink.name], expand=False, padding=0)
 		self.device_box[pa_sink.name].update(**args)
 	
+	@property
+	def media_stream_boxes_width(self):
+		return self._media_stream_boxes_width
+	
+	@media_stream_boxes_width.setter
+	def media_stream_boxes_width(self, new):
+		if self.media_streams_boxes_placeholder is not None:
+			self.media_streams_boxes_placeholder.set_size_requirement(new, -1)
+		self._media_stream_boxes_width = new
+		self.emit('media-stream-boxes-width-changed', new)
+	
+	def set_media_stream_boxes_width(self, new):
+		self.media_stream_boxes_width = new
+	
 	def on_media_stream_box_size_change(self, widget, allocation):
 		new_width = allocation.width
-		diff = new_width - self._media_stream_boxes_width
-		self._media_stream_boxes_width = new_width
+		diff = new_width - self.media_stream_boxes_width
+		self.media_stream_boxes_width = new_width
 		if diff != 0:
 			W, H = self.get_size()
 			gobject.idle_add(self.resize, W + diff, H)
 		return False
+	
+	def add_media_streams_boxes_widget(self, widget):
+		self.media_streams_boxes_sizegroup.add_widget(widget)
+		if self.media_streams_boxes_placeholder is not None:
+			self.media_streams_boxes_sizegroup.remove_widget(self.media_streams_boxes_placeholder)
+			self.media_streams_boxes_placeholder.destroy()
+			self.media_streams_boxes_placeholder = None
 
 
 class AudioDeviceBox(gtk.VBox):
@@ -181,7 +214,7 @@ class AudioDeviceBox(gtk.VBox):
 		# TODO add set-default radio button
 		
 		self.media_streams_box = MediaStreamsBox(parent=self)
-		self._parent.media_streams_boxes_sizegroup.add_widget(self.media_streams_box)
+		self._parent.add_media_streams_boxes_widget(self.media_streams_box)
 		self.label = gtk.Label()
 		self.label.set_alignment(0, 0.5)
 		
