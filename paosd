@@ -17,6 +17,7 @@ else:
 import pulsectl
 import threading
 import glib
+import gobject
 import gtk
 import hband_tools.gui as gui
 
@@ -151,8 +152,7 @@ class VolumeWindow(gui.Window):
 		self._media_stream_boxes_width = new_width
 		if diff != 0:
 			W, H = self.get_size()
-			print W, H, 'w-diff', diff
-			self.resize(W + diff, H)
+			gobject.idle_add(self.resize, W + diff, H)
 		return False
 
 
@@ -266,7 +266,7 @@ class MediaStreamButton(gtk.ToggleButton):
 	
 	@property
 	def sink_input(self):
-		return pulseproxy.sink_input_info(self._sink_input_index+100)
+		return pulseproxy.sink_input_info(self._sink_input_index)
 	
 	def on_clicked(self, widget):
 		if not self._programatic_state_change_in_progress:
