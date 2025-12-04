@@ -90,7 +90,6 @@ def on_pulse_event_in_gtk_thread():
 			'pid':  media_stream.proplist['application.process.id'],
 			'icon': media_stream.proplist['application.icon_name'],
 		})
-		# TODO popup when new media stream appear
 	gtk.threads_enter()
 	for pa_sink in pa_sinks:
 		main_win.update_silent(pa_sink, media_streams = media_streams_per_sink.get(pa_sink.name, []))
@@ -147,10 +146,13 @@ class VolumeWindow(gui.Window):
 		if event.detail in [gtk.gdk.NOTIFY_NONLINEAR]:
 			self.hide_timer.start()
 	
-	def update(self, pa_sink, **args):
-		self.update_silent(pa_sink, **args)
+	def popup(self):
 		self.hide_timer.restart()
 		self.show_all()
+	
+	def update(self, pa_sink, **args):
+		self.update_silent(pa_sink, **args)
+		self.popup()
 	
 	def update_silent(self, pa_sink, **args):
 		if pa_sink.name not in self.device_box.keys():
@@ -270,6 +272,7 @@ class MediaStreamsBox(gtk.HBox):
 	
 	def update_streams(self, streams):
 		only_stream_indices = []
+		new_media_streams_appeared = 0
 		for stream in streams:
 			sink_input_index = stream['sink_input_index']
 			if sink_input_index in self.stream_widgets.keys():
@@ -277,11 +280,14 @@ class MediaStreamsBox(gtk.HBox):
 			else:
 				self.stream_widgets[sink_input_index] = MediaStreamButton(stream)
 				self.pack_start(self.stream_widgets[sink_input_index], expand=False, padding=0)
+				new_media_streams_appeared += 1
 			only_stream_indices.append(sink_input_index)
 		for sink_input_index, stream_widget in self.stream_widgets.items():
 			if sink_input_index not in only_stream_indices:
 				self.remove(stream_widget)
 				del self.stream_widgets[sink_input_index]
+		if new_media_streams_appeared:
+			self._devicebox._parent.popup()
 
 
 class MediaStreamButton(gtk.ToggleButton):
