@@ -127,12 +127,13 @@ class VolumeWindow(gui.Window):
 		
 		self._media_stream_boxes_width = 0
 		self.media_streams_boxes_sizegroup = gtk.SizeGroup(gtk.SIZE_GROUP_HORIZONTAL)
-		self.media_streams_boxes_placeholder = gtk.HBox()
-		self.vbox.pack_start(self.media_streams_boxes_placeholder, expand=False, padding=0)
-		self.media_streams_boxes_sizegroup.add_widget(self.media_streams_boxes_placeholder)
 		self.property_persistor.add_properties([
-			('media-stream-boxes-width', 'media-stream-boxes-width-changed', lambda widget, width: width, lambda widget, width: widget.set_media_stream_boxes_width(width))
+			('media-stream-boxes-width', 'media-stream-boxes-width-changed', lambda widget, width: width, lambda widget, width: None)
 		])
+		media_stream_boxes_width_saved = self.property_persistor.props.get('media-stream-boxes-width')
+		if media_stream_boxes_width_saved is not None:
+			W, H = self.get_size()
+			gobject.idle_add(self.resize, W - media_stream_boxes_width_saved + 1, H)
 	
 	def on_mouse_button_release(self, widget, event):
 		if event.button != gui.MOUSE_BUTTON_RIGHT: return
@@ -166,13 +167,8 @@ class VolumeWindow(gui.Window):
 	
 	@media_stream_boxes_width.setter
 	def media_stream_boxes_width(self, new):
-		if self.media_streams_boxes_placeholder is not None:
-			self.media_streams_boxes_placeholder.set_size_requirement(new, -1)
 		self._media_stream_boxes_width = new
 		self.emit('media-stream-boxes-width-changed', new)
-	
-	def set_media_stream_boxes_width(self, new):
-		self.media_stream_boxes_width = new
 	
 	def on_media_stream_box_size_change(self, widget, allocation):
 		new_width = allocation.width
@@ -185,10 +181,6 @@ class VolumeWindow(gui.Window):
 	
 	def add_media_streams_boxes_widget(self, widget):
 		self.media_streams_boxes_sizegroup.add_widget(widget)
-		if self.media_streams_boxes_placeholder is not None:
-			self.media_streams_boxes_sizegroup.remove_widget(self.media_streams_boxes_placeholder)
-			self.media_streams_boxes_placeholder.destroy()
-			self.media_streams_boxes_placeholder = None
 
 
 class AudioDeviceBox(gtk.VBox):
@@ -281,6 +273,7 @@ class MediaStreamsBox(gtk.HBox):
 				self.stream_widgets[sink_input_index] = MediaStreamButton(stream)
 				self.pack_start(self.stream_widgets[sink_input_index], expand=False, padding=0)
 				new_media_streams_appeared += 1
+				# TODO realize new media stream only if it lasts for at least, say, 1 sec, so no short beeps and notification blurps bring us up
 			only_stream_indices.append(sink_input_index)
 		for sink_input_index, stream_widget in self.stream_widgets.items():
 			if sink_input_index not in only_stream_indices:
