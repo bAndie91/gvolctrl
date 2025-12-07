@@ -26,6 +26,7 @@ import hband_tools.gui as gui
 APPNAME = 'paosd'
 MainWindowHideTimeoutSec = 5.0
 MainWindowDefaultWidthPx = 250
+MediaStreamButtonCreateLeadTimeSec = 0.8
 
 
 class Timer(object):
@@ -264,22 +265,24 @@ class MediaStreamsBox(gtk.HBox):
 	
 	def update_streams(self, streams):
 		only_stream_indices = []
-		new_media_streams_appeared = 0
 		for stream in streams:
 			sink_input_index = stream['sink_input_index']
 			if sink_input_index in self.stream_widgets.keys():
 				self.stream_widgets[sink_input_index].update(stream)
 			else:
-				self.stream_widgets[sink_input_index] = MediaStreamButton(stream)
-				self.pack_start(self.stream_widgets[sink_input_index], expand=False, padding=0)
-				new_media_streams_appeared += 1
-				# TODO realize new media stream only if it lasts for at least, say, 1 sec, so no short beeps and notification blurps bring us up
+				self.stream_widgets[sink_input_index] = PendingMediaStreamButton(stream)
+				Timer(MediaStreamButtonCreateLeadTimeSec, self.create_pending_button, sink_input_index).start()
 			only_stream_indices.append(sink_input_index)
 		for sink_input_index, stream_widget in self.stream_widgets.items():
 			if sink_input_index not in only_stream_indices:
-				self.remove(stream_widget)
+				if stream_widget in self.get_children(): self.remove(stream_widget)
 				del self.stream_widgets[sink_input_index]
-		if new_media_streams_appeared:
+	
+	def create_pending_button(self, sink_input_index):
+		if sink_input_index in self.stream_widgets.keys() and isinstance(self.stream_widgets[sink_input_index], PendingMediaStreamButton):
+			self.stream_widgets[sink_input_index] = MediaStreamButton(self.stream_widgets[sink_input_index].media_stream)
+			self.pack_start(self.stream_widgets[sink_input_index], expand=False, padding=0)
+			self.show_all()
 			self._devicebox._parent.popup()
 
 
@@ -291,7 +294,6 @@ class MediaStreamButton(gtk.ToggleButton):
 		self.connect('clicked', self.on_clicked)
 		self.set_image(gtk.Image())
 		self.update(media_stream)
-		self.show_all()
 	
 	def set_icon_name(self, icon_name):
 		self.get_image().set_from_icon_name(icon_name, gtk.ICON_SIZE_LARGE_TOOLBAR)
@@ -319,6 +321,13 @@ class MediaStreamButton(gtk.ToggleButton):
 		except pulsectl.pulsectl.PulseError:
 			pass
 		self.set_tooltip_text(media_stream.get('prog', '') + ' ➤ ' + media_stream.get('name', ''))
+
+class PendingMediaStreamButton(MediaStreamButton):
+	def __init__(self, media_stream):
+		super(PendingMediaStreamButton, self).__init__(media_stream)
+		self.update(media_stream)
+	def update(self, media_stream):
+		self.media_stream = media_stream
 
 
 class PulseProxy(object):
