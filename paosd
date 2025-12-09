@@ -96,14 +96,21 @@ def on_pulse_event_in_gtk_thread():
 		media_streams_per_sink[sink_name].append({
 			'sink_input_index': media_stream.index,
 			'name': media_stream.name,
-			'prog': media_stream.proplist['application.name'],
-			'pid':  media_stream.proplist['application.process.id'],
-			'icon': media_stream.proplist['application.icon_name'],
+			'prog': media_stream.proplist.get('application.name', ''),
+			'pid':  media_stream.proplist.get('application.process.id'),
+			'icon': media_stream.proplist.get('application.icon_name'),
 		})
 	with GtkThreads():
 		for pa_sink in pa_sinks:
 			main_win.update_silent(pa_sink, media_streams = media_streams_per_sink.get(pa_sink.name, []))
 		global_media_stream_pool.cleanup()
+
+
+class DragOffset(object):
+	def __init__(self, event, widget):
+		x, y = widget.get_position()
+		self.x = event.x_root - x
+		self.y = event.y_root - y
 
 
 class VolumeWindow(gui.Window):
@@ -124,10 +131,12 @@ class VolumeWindow(gui.Window):
 		self.set_type_hint(gtk.gdk.WINDOW_TYPE_HINT_UTILITY)
 		self.set_resizable(True)
 		
-		self.add_events(gtk.gdk.BUTTON_RELEASE_MASK | gtk.gdk.ENTER_NOTIFY_MASK | gtk.gdk.LEAVE_NOTIFY_MASK)
-		self.connect_after('button-release-event', self.on_mouse_button_release)
-		self.connect_after('enter-notify-event', self.on_pointer_enter)
-		self.connect_after('leave-notify-event', self.on_pointer_leave)
+		self.add_events(gtk.gdk.BUTTON_PRESS_MASK | gtk.gdk.BUTTON_RELEASE_MASK | gtk.gdk.POINTER_MOTION_MASK | gtk.gdk.ENTER_NOTIFY_MASK | gtk.gdk.LEAVE_NOTIFY_MASK)
+		self.connect_after('button-release-event', self.on_mouse_button_release_hide)
+		self.connect_after('enter-notify-event', self.on_pointer_enter_hide)
+		self.connect_after('leave-notify-event', self.on_pointer_leave_hide)
+		self.connect('button-press-event', self.on_mouse_button_press_dnd)
+		self.connect('button-release-event', self.on_mouse_button_release_dnd)
 		
 		frame = gtk.Frame()
 		frame.set_shadow_type(gtk.SHADOW_OUT)
@@ -145,17 +154,31 @@ class VolumeWindow(gui.Window):
 			W, H = self.get_size()
 			gobject.idle_add(self.resize, W - media_stream_boxes_width_saved + 1, H)
 	
-	def on_mouse_button_release(self, widget, event):
+	def on_mouse_button_release_hide(self, widget, event):
 		if event.button != gui.MOUSE_BUTTON_RIGHT: return
 		self.hide_timer.stop()
 		self.hide()
 	
-	def on_pointer_enter(self, widget, event):
+	def on_pointer_enter_hide(self, widget, event):
 		self.hide_timer.stop()
 	
-	def on_pointer_leave(self, widget, event):
+	def on_pointer_leave_hide(self, widget, event):
 		if event.detail in [gtk.gdk.NOTIFY_NONLINEAR]:
 			self.hide_timer.start()
+	
+	def on_mouse_button_press_dnd(self, widget, event):
+		if event.button != gui.MOUSE_BUTTON_LEFT: return
+		self._drag_offset = DragOffset(event, self)
+		self.connect('motion-notify-event', self.on_mouse_move_dnd)
+	
+	def on_mouse_button_release_dnd(self, widget, event):
+		if event.button != gui.MOUSE_BUTTON_LEFT: return
+		self.disconnect_by_func(self.on_mouse_move_dnd)
+	
+	def on_mouse_move_dnd(self, widget, event):
+		new_x = int(event.x_root - self._drag_offset.x)
+		new_y = int(event.y_root - self._drag_offset.y)
+		self.move(new_x, new_y)
 	
 	def popup(self):
 		self.hide_timer.restart()
