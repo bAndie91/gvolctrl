@@ -26,7 +26,7 @@ import hband_tools.gui as gui
 APPNAME = 'paosd'
 MainWindowHideTimeoutSec = 5.0
 MainWindowDefaultWidthPx = 250
-MediaStreamButtonCreateLeadTimeSec = 0.8
+MediaStreamButtonDebounceSec = 0.6
 
 
 class Timer(object):
@@ -47,6 +47,16 @@ class Timer(object):
 	def fire(self):
 		self.stop()
 		self.callback(*self.cb_args)
+	@property
+	def winded_down(self):
+		return self.handle is None
+
+
+class GtkThreads(object):
+	def __enter__(self):
+		gtk.threads_enter()
+	def __exit__(self, exc_type, exc, tb):
+		gtk.threads_leave()
 
 
 def listen_pulse_events():
@@ -75,9 +85,8 @@ def on_pulse_event_in_gtk_thread():
 		device_key = (sink_desc, port_desc)
 		device_info = (pa_sink.mute, volume)
 		if InfoDisplayedPerDevice.get(device_key, (None, None)) != device_info:
-			gtk.threads_enter()
-			main_win.update(pa_sink, label = sink_desc + " ➤ " + port_desc, muted = pa_sink.mute, volume = volume)
-			gtk.threads_leave()
+			with GtkThreads():
+				main_win.update(pa_sink, label = sink_desc + " ➤ " + port_desc, muted = pa_sink.mute, volume = volume)
 			InfoDisplayedPerDevice[device_key] = device_info
 			# TODO update window even when the sink port changes
 	media_streams_per_sink = {}
@@ -91,10 +100,10 @@ def on_pulse_event_in_gtk_thread():
 			'pid':  media_stream.proplist['application.process.id'],
 			'icon': media_stream.proplist['application.icon_name'],
 		})
-	gtk.threads_enter()
-	for pa_sink in pa_sinks:
-		main_win.update_silent(pa_sink, media_streams = media_streams_per_sink.get(pa_sink.name, []))
-	gtk.threads_leave()
+	with GtkThreads():
+		for pa_sink in pa_sinks:
+			main_win.update_silent(pa_sink, media_streams = media_streams_per_sink.get(pa_sink.name, []))
+		global_media_stream_pool.cleanup()
 
 
 class VolumeWindow(gui.Window):
@@ -258,37 +267,80 @@ class MediaStreamsBox(gtk.HBox):
 		self._devicebox = parent
 		super(MediaStreamsBox, self).__init__(homogeneous=True, spacing=2)
 		self.connect('size-allocate', self._devicebox._parent.on_media_stream_box_size_change)
-		self.stream_widgets = {}
 	
 	def __repr__(self):
 		return "<%s sink=%s>" % (self.__class__.__name__, self._devicebox.pa_sink.name)
 	
-	def update_streams(self, streams):
-		only_stream_indices = []
-		for stream in streams:
-			sink_input_index = stream['sink_input_index']
-			if sink_input_index in self.stream_widgets.keys():
-				self.stream_widgets[sink_input_index].update(stream)
-			else:
-				self.stream_widgets[sink_input_index] = PendingMediaStreamButton(stream)
-				Timer(MediaStreamButtonCreateLeadTimeSec, self.create_pending_button, sink_input_index).start()
-			only_stream_indices.append(sink_input_index)
-		for sink_input_index, stream_widget in self.stream_widgets.items():
-			if sink_input_index not in only_stream_indices:
-				if stream_widget in self.get_children(): self.remove(stream_widget)
-				del self.stream_widgets[sink_input_index]
+	def update_streams(self, my_streams):
+		my_streams_ids = []
+		for stream in my_streams:
+			global_media_stream_pool.update(stream, self)
+			my_streams_ids.append( global_media_stream_pool.get_id(stream) )
+		for media_stream_id in global_media_stream_pool.get_media_stream_ids_owned_by(self):
+			if media_stream_id not in my_streams_ids:
+				global_media_stream_pool.relinquish(media_stream_id, self)
 	
-	def create_pending_button(self, sink_input_index):
-		if sink_input_index in self.stream_widgets.keys() and isinstance(self.stream_widgets[sink_input_index], PendingMediaStreamButton):
-			self.stream_widgets[sink_input_index] = MediaStreamButton(self.stream_widgets[sink_input_index].media_stream)
-			self.pack_start(self.stream_widgets[sink_input_index], expand=False, padding=0)
-			self.show_all()
-			self._devicebox._parent.popup()
+	def assign_media_stream_button(self, widget):
+		self.pack_start(widget, expand=False, padding=0)
+		self.show_all()
+		self._devicebox._parent.popup()
+
+
+class MediaStreamPool(object):
+	def __init__(self):
+		self.stream_symbols = {}
+	
+	def get_media_stream_ids_owned_by(self, owner):
+		return [ key for key in self.stream_symbols.keys() if self.stream_symbols[key]['owner'] is owner ]
+	
+	def get_id(self, media_stream):
+		return media_stream['sink_input_index']
+	
+	def update(self, media_stream, new_owner):
+		sink_input_index = self.get_id(media_stream)
+		if sink_input_index not in self.stream_symbols.keys():
+			debounce_timer = Timer(MediaStreamButtonDebounceSec, self.manifestate, sink_input_index)
+			self.stream_symbols[sink_input_index] = {
+				'owner': new_owner,
+				'widget': MediaStreamButton(media_stream),
+				'debounce-timer': debounce_timer,
+			}
+			debounce_timer.start()
+		else:
+			stream_symbol = self.stream_symbols[sink_input_index]
+			old_owner = stream_symbol['owner']
+			if old_owner is not new_owner:
+				self.relinquish(sink_input_index, old_owner)
+				stream_symbol['owner'] = new_owner
+				if stream_symbol['debounce-timer'].winded_down:
+					self.manifestate(sink_input_index)
+			stream_symbol['widget'].update(media_stream)
+	
+	def manifestate(self, sink_input_index):
+		stream_symbol = self.stream_symbols[sink_input_index]
+		owner = stream_symbol['owner']
+		if owner is not None:
+			owner.assign_media_stream_button(stream_symbol['widget'])
+	
+	def relinquish(self, sink_input_index, old_owner):
+		if old_owner is None: return
+		stream_symbol = self.stream_symbols[sink_input_index]
+		if stream_symbol['owner'] is old_owner:
+			if stream_symbol['widget'] in old_owner.get_children():
+				old_owner.remove(stream_symbol['widget'])
+			stream_symbol['owner'] = None
+	
+	def cleanup(self):
+		for sink_input_index, stream_symbol in self.stream_symbols.items():
+			if stream_symbol['owner'] is None:
+				stream_symbol['debounce-timer'].stop()
+				stream_symbol['widget'].destroy()
+				del self.stream_symbols[sink_input_index]
 
 
 class MediaStreamButton(gtk.ToggleButton):
 	def __init__(self, media_stream):
-		self._sink_input_index = media_stream['sink_input_index']
+		self.sink_input_index = media_stream['sink_input_index']
 		super(MediaStreamButton, self).__init__()
 		self._programatic_state_change_in_progress = None
 		self.connect('clicked', self.on_clicked)
@@ -300,7 +352,7 @@ class MediaStreamButton(gtk.ToggleButton):
 	
 	@property
 	def sink_input(self):
-		return pulseproxy.sink_input_info(self._sink_input_index)
+		return pulseproxy.sink_input_info(self.sink_input_index)
 	
 	def on_clicked(self, widget):
 		if not self._programatic_state_change_in_progress:
@@ -321,13 +373,6 @@ class MediaStreamButton(gtk.ToggleButton):
 		except pulsectl.pulsectl.PulseError:
 			pass
 		self.set_tooltip_text(media_stream.get('prog', '') + ' ➤ ' + media_stream.get('name', ''))
-
-class PendingMediaStreamButton(MediaStreamButton):
-	def __init__(self, media_stream):
-		super(PendingMediaStreamButton, self).__init__(media_stream)
-		self.update(media_stream)
-	def update(self, media_stream):
-		self.media_stream = media_stream
 
 
 class PulseProxy(object):
@@ -361,6 +406,7 @@ pulse_listen_thr = threading.Thread(target=listen_pulse_events, name='Pulse list
 pulse_listen_thr.setDaemon(True)
 pulse_listen_thr.start()
 
+global_media_stream_pool = MediaStreamPool()
 main_win = VolumeWindow()
 main_win.hide()
 try:
