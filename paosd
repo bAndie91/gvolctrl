@@ -137,6 +137,7 @@ class VolumeWindow(gui.Window):
 		self.connect_after('leave-notify-event', self.on_pointer_leave_hide)
 		self.connect('button-press-event', self.on_mouse_button_press_dnd)
 		self.connect('button-release-event', self.on_mouse_button_release_dnd)
+		self._motion_signal_handler_id = None
 		
 		frame = gtk.Frame()
 		frame.set_shadow_type(gtk.SHADOW_OUT)
@@ -169,11 +170,13 @@ class VolumeWindow(gui.Window):
 	def on_mouse_button_press_dnd(self, widget, event):
 		if event.button != gui.MOUSE_BUTTON_LEFT: return
 		self._drag_offset = DragOffset(event, self)
-		self.connect('motion-notify-event', self.on_mouse_move_dnd)
+		if self._motion_signal_handler_id is None:
+			self._motion_signal_handler_id = self.connect('motion-notify-event', self.on_mouse_move_dnd)
 	
 	def on_mouse_button_release_dnd(self, widget, event):
-		if event.button != gui.MOUSE_BUTTON_LEFT: return
-		self.disconnect_by_func(self.on_mouse_move_dnd)
+		if self._motion_signal_handler_id is not None:
+			self.disconnect(self._motion_signal_handler_id)
+			self._motion_signal_handler_id = None
 	
 	def on_mouse_move_dnd(self, widget, event):
 		new_x = int(event.x_root - self._drag_offset.x)
@@ -242,6 +245,10 @@ class AudioDeviceBox(gtk.VBox):
 		
 		self.media_streams_box = MediaStreamsBox(parent=self)
 		self._parent.add_media_streams_boxes_widget(self.media_streams_box)
+		self.drag_dest_set(gtk.DEST_DEFAULT_ALL, [], gtk.gdk.ACTION_MOVE)
+		self.drag_dest_add_text_targets()
+		self.connect("drag-data-received", self.on_drag_data_received)
+		
 		self.label = gtk.Label()
 		self.label.set_alignment(0, 0.5)
 		
@@ -264,6 +271,10 @@ class AudioDeviceBox(gtk.VBox):
 	
 	def on_slider_changed(self, range_obj):
 		self.voltext.set_text('%d%%' % range_obj.get_value())
+	
+	def on_drag_data_received(self, widget, drag_context, x, y, data, info, time):
+		sink_input_index = long(data.get_text())
+		pulseproxy.sink_input_move(sink_input_index, self.pa_sink.index)
 	
 	def update(self, **args):
 		if 'volume' in args:
@@ -366,11 +377,18 @@ class MediaStreamButton(gtk.ToggleButton):
 		self.sink_input_index = media_stream['sink_input_index']
 		super(MediaStreamButton, self).__init__()
 		self._programatic_state_change_in_progress = None
-		self.connect('clicked', self.on_clicked)
+		self.connect_after('clicked', self.on_clicked)
+		
+		self.drag_source_set(gtk.gdk.BUTTON1_MASK, [], gtk.gdk.ACTION_MOVE)
+		self.drag_source_add_text_targets()
+		self.connect("drag-begin", self.on_drag_begin)
+		self.connect("drag-data-get", self.on_drag_data_get)
+		
 		self.set_image(gtk.Image())
 		self.update(media_stream)
 	
 	def set_icon_name(self, icon_name):
+		self.drag_source_set_icon_name(icon_name)
 		self.get_image().set_from_icon_name(icon_name, gtk.ICON_SIZE_LARGE_TOOLBAR)
 	
 	@property
@@ -380,6 +398,12 @@ class MediaStreamButton(gtk.ToggleButton):
 	def on_clicked(self, widget):
 		if not self._programatic_state_change_in_progress:
 			pulseproxy.sink_input_mute(self.sink_input.index, not self.get_active())
+	
+	def on_drag_begin(self, widget, drag_context):
+		main_win.hide_timer.stop()
+	
+	def on_drag_data_get(self, widget, drag_context, data, info, time):
+		data.set_text(str(self.sink_input_index))
 	
 	def set_active(self, active_state):
 		self._programatic_state_change_in_progress = True
