@@ -97,14 +97,27 @@ def on_pulse_event_in_gtk_thread():
 			'sink_input_index': media_stream.index,
 			'name': media_stream.name,
 			'prog': media_stream.proplist.get('application.name', ''),
-			'pid':  media_stream.proplist.get('application.process.id'),
-			'icon': media_stream.proplist.get('application.icon_name'),
+			'icon': guess_mediastream_icon(media_stream),
 		})
 	with GtkThreads():
 		for pa_sink in pa_sinks:
 			main_win.update_silent(pa_sink, media_streams = media_streams_per_sink.get(pa_sink.name, []))
 		global_media_stream_pool.cleanup()
 
+
+def guess_mediastream_icon(media_stream):
+	for propname in 'media.icon_name', 'window.icon_name', 'application.icon_name':
+		prop = media_stream.proplist.get(propname)
+		if prop is not None:
+			return prop
+	role = media_stream.proplist.get('media.role')
+	return {
+		'video': 'video',
+		'phone': 'phone',
+		'music': 'audio',
+		'game': 'applications-games',
+		'event': 'dialog-information',
+	}.get(role, 'audio-input-microphon' if isinstance(media_stream, pulsectl.PulseSourceOutputInfo) else 'audio-card')
 
 class DragOffset(object):
 	def __init__(self, event, widget):
@@ -317,6 +330,7 @@ class MediaStreamsBox(gtk.HBox):
 	def assign_media_stream_button(self, widget):
 		self.pack_start(widget, expand=False, padding=0)
 		self.show_all()
+		# TODO show only if playing, and show also when starts playing
 		self._devicebox._parent.popup()
 
 
@@ -375,6 +389,7 @@ class MediaStreamPool(object):
 class MediaStreamButton(gtk.ToggleButton):
 	def __init__(self, media_stream):
 		self.sink_input_index = media_stream['sink_input_index']
+		self._icon_size = gtk.ICON_SIZE_LARGE_TOOLBAR
 		super(MediaStreamButton, self).__init__()
 		self._programatic_state_change_in_progress = None
 		self.connect_after('clicked', self.on_clicked)
@@ -388,8 +403,18 @@ class MediaStreamButton(gtk.ToggleButton):
 		self.update(media_stream)
 	
 	def set_icon_name(self, icon_name):
-		self.drag_source_set_icon_name(icon_name)
-		self.get_image().set_from_icon_name(icon_name, gtk.ICON_SIZE_LARGE_TOOLBAR)
+		theme = gtk.icon_theme_get_default()
+		iconinfo = theme.lookup_icon(icon_name, gtk.icon_size_lookup(self._icon_size)[0], gtk.ICON_LOOKUP_GENERIC_FALLBACK | gtk.ICON_LOOKUP_USE_BUILTIN)
+		if iconinfo is not None:
+			if iconinfo.get_filename() is None:
+				pixbuf = iconinfo.get_builtin_pixbuf()
+			else:
+				pixbuf = iconinfo.load_icon()
+			self.drag_source_set_icon_pixbuf(pixbuf)
+			self.get_image().set_from_pixbuf(pixbuf)
+		else:
+			self.drag_source_set_icon_stock(icon_name)
+			self.get_image().set_from_stock(icon_name, self._icon_size)
 	
 	@property
 	def sink_input(self):
