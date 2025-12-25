@@ -36,7 +36,7 @@ class Timer(object):
 		self.cb_args = cb_args
 		self.handle = None
 	def start(self):
-		self.handle = glib.timeout_add(int(self.timeout_sec * 1000), self.fire)
+		self.handle = glib.timeout_add(int(self.timeout_sec * 1000), self.time_up)
 	def stop(self):
 		if self.handle is not None:
 			glib.source_remove(self.handle)
@@ -44,8 +44,10 @@ class Timer(object):
 	def restart(self):
 		self.stop()
 		self.start()
-	def fire(self):
+	def time_up(self):
 		self.stop()
+		self.fire()
+	def fire():
 		self.callback(*self.cb_args)
 	@property
 	def winded_down(self):
@@ -132,7 +134,7 @@ class VolumeWindow(gui.Window):
 	}
 	
 	def __init__(self):
-		self.hide_timer = Timer(MainWindowHideTimeoutSec, self.hide)
+		self.hide_timer = Timer(MainWindowHideTimeoutSec, self.popdown)
 		self.device_box = {}
 		
 		super(VolumeWindow, self).__init__({'name': 'window.main', 'default-size': (MainWindowDefaultWidthPx, -1), 'gtk-args': [gtk.WINDOW_TOPLEVEL]})
@@ -171,7 +173,7 @@ class VolumeWindow(gui.Window):
 	def on_mouse_button_release_hide(self, widget, event):
 		if event.button != gui.MOUSE_BUTTON_RIGHT: return
 		self.hide_timer.stop()
-		self.hide()
+		self.hide_timer.fire()
 	
 	def on_pointer_enter_hide(self, widget, event):
 		self.hide_timer.stop()
@@ -187,6 +189,9 @@ class VolumeWindow(gui.Window):
 			self._motion_signal_handler_id = self.connect('motion-notify-event', self.on_mouse_move_dnd)
 	
 	def on_mouse_button_release_dnd(self, widget, event):
+		self.disconnect_dnd_signal()
+	
+	def disconnect_dnd_signal(self):
 		if self._motion_signal_handler_id is not None:
 			self.disconnect(self._motion_signal_handler_id)
 			self._motion_signal_handler_id = None
@@ -199,6 +204,10 @@ class VolumeWindow(gui.Window):
 	def popup(self):
 		self.hide_timer.restart()
 		self.show_all()
+	
+	def popdown(self):
+		self.disconnect_dnd_signal()
+		self.hide()
 	
 	def update(self, pa_sink, **args):
 		self.update_silent(pa_sink, **args)
