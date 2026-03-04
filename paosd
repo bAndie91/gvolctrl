@@ -202,6 +202,7 @@ class VolumeWindow(gui.Window):
 		self.set_accept_focus(False)
 		self.set_resizable(True)
 		
+		self.connect("map-event", lambda w, e: w.set_urgency_hint(False) or False)  # gtk quirk: when the window is shown but WM does not give it focus, it gets an urgency hint. it must be cleared unless the taskbar shows and blinks it.
 		self.add_events(gtk.gdk.BUTTON_PRESS_MASK | gtk.gdk.BUTTON_RELEASE_MASK | gtk.gdk.POINTER_MOTION_MASK | gtk.gdk.ENTER_NOTIFY_MASK | gtk.gdk.LEAVE_NOTIFY_MASK)
 		self.connect_after('button-release-event', self.on_mouse_button_release_hide)
 		self.connect_after('enter-notify-event', self.on_pointer_enter_hide)
