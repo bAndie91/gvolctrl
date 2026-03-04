@@ -519,15 +519,32 @@ class PulseProxy(object):
 	def _connect(self):
 		if self._pa is None or not self._pa.connected:
 			self._pa = pulsectl.Pulse(APPNAME+'.control')
-	def __getattr__(self, name):
+	def _reconnect(self):
+		self._pa = None
 		self._connect()
-		return getattr(self._pa, name)
-	def __setattr__(self, name, value):
-		if name.startswith('_'):
-			object.__setattr__(self, name, value)
-		else:
-			self._connect()
-			setattr(self._pa, name, value)
+	def _call(self, method, *parg, **kwarg):
+		self._connect()
+		try:
+			return getattr(self._pa, method)(*parg, **kwarg)
+		except pulsectl.PulseOperationFailed:
+			self._reconnect()
+		return getattr(self._pa, method)(*parg, **kwarg)
+	def sink_list(self, *parg, **kwarg):
+		return self._call('sink_list', *parg, **kwarg)
+	def sink_input_list(self, *parg, **kwarg):
+		return self._call('sink_input_list', *parg, **kwarg)
+	def sink_info(self, *parg, **kwarg):
+		return self._call('sink_info', *parg, **kwarg)
+	def mute(self, *parg, **kwarg):
+		return self._call('mute', *parg, **kwarg)
+	def volume_set_all_chans(self, *parg, **kwarg):
+		return self._call('volume_set_all_chans', *parg, **kwarg)
+	def sink_input_move(self, *parg, **kwarg):
+		return self._call('sink_input_move', *parg, **kwarg)
+	def sink_input_info(self, *parg, **kwarg):
+		return self._call('sink_input_info', *parg, **kwarg)
+	def sink_input_mute(self, *parg, **kwarg):
+		return self._call('sink_input_mute', *parg, **kwarg)
 
 
 
