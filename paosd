@@ -220,13 +220,20 @@ class VolumeWindow(gui.Window):
 		self._media_stream_boxes_width = 0
 		self.media_streams_boxes_sizegroup = gtk.SizeGroup(gtk.SIZE_GROUP_HORIZONTAL)
 		self.property_persistor.add_properties([
-			('media-stream-boxes-width', 'media-stream-boxes-width-changed', lambda widget, width: width, lambda widget, width: None)
+			('media-stream-boxes-width', 'media-stream-boxes-width-changed', lambda widget, width: width, lambda widget, width: self.restore_media_stream_boxes_width(width))
 		])
 		media_stream_boxes_width_saved = self.property_persistor.props.get('media-stream-boxes-width')
 		if media_stream_boxes_width_saved is not None:
-			W, H = self.get_size()
-			gobject.idle_add(self.resize, W - media_stream_boxes_width_saved + 1, H)
+			self.restore_media_stream_boxes_width(media_stream_boxes_width_saved)
 	
+	def restore_media_stream_boxes_width(self, width):
+		if self.get_mapped():
+			W, H = self.get_size()
+		else:
+			W, H = self.property_persistor.props.get('geometry', (None, None))
+		if W is not None:
+			gobject.idle_add(self.resize, W - width + 1, H)
+
 	def on_mouse_button_release_hide(self, widget, event):
 		if event.button != gui.MOUSE_BUTTON_RIGHT: return
 		self.hide_timer.stop()
@@ -256,12 +263,13 @@ class VolumeWindow(gui.Window):
 	def on_mouse_move_dnd(self, widget, event):
 		new_x = int(event.x_root - self._drag_offset.x)
 		new_y = int(event.y_root - self._drag_offset.y)
-		self.move(new_x, new_y)
+		self.move(new_x, new_y, is_programmatic=False)
 	
 	def popup(self):
 		_icewm_send_winopthint()
 		self.hide_timer.restart()
 		self.show_all()
+		self.property_persistor.apply_saved_properties()
 	
 	def popdown(self):
 		self.disconnect_dnd_signal()
