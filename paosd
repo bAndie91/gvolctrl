@@ -220,19 +220,13 @@ class VolumeWindow(gui.Window):
 		self._media_stream_boxes_width = 0
 		self.media_streams_boxes_sizegroup = gtk.SizeGroup(gtk.SIZE_GROUP_HORIZONTAL)
 		self.property_persistor.add_properties([
-			('media-stream-boxes-width', 'media-stream-boxes-width-changed', lambda widget, width: width, lambda widget, width: self.restore_media_stream_boxes_width(width))
+			('media-stream-boxes-width', 'media-stream-boxes-width-changed', lambda widget, width: width, None)
 		])
 		media_stream_boxes_width_saved = self.property_persistor.props.get('media-stream-boxes-width')
 		if media_stream_boxes_width_saved is not None:
-			self.restore_media_stream_boxes_width(media_stream_boxes_width_saved)
-	
-	def restore_media_stream_boxes_width(self, width):
-		if self.get_mapped():
-			W, H = self.get_size()
-		else:
 			W, H = self.property_persistor.props.get('geometry', (None, None))
-		if W is not None:
-			gobject.idle_add(self.resize, W - width + 1, H)
+			if W is not None:
+				self.set_window_size(W - media_stream_boxes_width_saved + 1, H)
 
 	def on_mouse_button_release_hide(self, widget, event):
 		if event.button != gui.MOUSE_BUTTON_RIGHT: return
